@@ -66,9 +66,27 @@ for (const name of names) {
 
   let selection = null;
   if (args.selector) {
-    selection = await readFile(path.join(args.selector, id, "C.output.json"), "utf8")
+    // 輸出檔沒有病人識別碼（刻意的），所以放錯資料夾不會有任何症狀——實測就
+    // 發生過兩位病人的輸出對調。判讀器要把年齡與 DCSI 抄回來，這裡核對。
+    const candidate = await readFile(path.join(args.selector, id, "C.output.json"), "utf8")
       .then(parseModuleSelection)
       .catch(() => null);
+    const echo = candidate?.echo;
+    const expected = [
+      [facts.ageYears.known ? facts.ageYears.value : null, echo?.ageYears ?? null, "年齡"],
+      [facts.dcsiTotal.known ? facts.dcsiTotal.value : null, echo?.dcsi ?? null, "DCSI"],
+    ];
+    const mismatched = echo
+      ? expected.filter(([mine, theirs]) => mine !== null && theirs !== null && mine !== theirs)
+      : [];
+    if (mismatched.length) {
+      console.error(
+        `⚠ ${id}：選模組輸出不是這位病人的（${mismatched.map(([m, t, label]) => `${label} ${t}≠${m}`).join("／")}），已忽略。`,
+      );
+    } else {
+      if (candidate && !echo) console.error(`⚠ ${id}：選模組輸出沒有 echo 欄位，無法核對是否為本人。`);
+      selection = candidate;
+    }
   }
 
   const plan = resolvePlan(selection, facts);

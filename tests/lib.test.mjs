@@ -14,6 +14,7 @@ import {
   decideTopics,
   decisionsForPrompt,
   parseModuleSelection,
+  MODULE_SELECTOR_PROMPT,
   PR_HIGH,
   PR_LOW,
   PR_MODERATE,
@@ -2210,4 +2211,19 @@ test("同名但檢體不同的項目要標出尿液，血液那筆不得誤標",
   );
   const names = check.review.abnormal.map((a) => a.item);
   assert.deepEqual(names, ["RBC", "RBC（尿液）", "Protein（尿液）"]);
+});
+
+test("選模組輸出要抄回年齡與 DCSI，供核對是不是同一位病人", () => {
+  // 輸出檔沒有病人識別碼是刻意的，代價是放錯資料夾不會有任何症狀——
+  // 實測就發生過兩位病人的輸出對調，是靠肉眼讀出「病程 1.6 年」對不上才發現。
+  assert.match(MODULE_SELECTOR_PROMPT, /"echo".*age_years.*dcsi/s);
+
+  const parsed = parseModuleSelection(
+    JSON.stringify({ echo: { age_years: 75, dcsi: 6 }, priorities: [], clinician_notes: [], data_concerns: [], disagreements: [] }),
+  );
+  assert.deepEqual(parsed.echo, { ageYears: 75, dcsi: 6 });
+
+  // 舊格式沒有 echo，要能解析但標為無法核對
+  const legacy = parseModuleSelection(JSON.stringify({ priorities: [] }));
+  assert.equal(legacy.echo, null);
 });

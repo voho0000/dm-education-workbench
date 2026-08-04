@@ -221,6 +221,7 @@ export const MODULE_SELECTOR_PROMPT = `你是糖尿病衛教報告的輔助判�
 輸出格式：只輸出一個 JSON 物件，不要加說明文字或程式碼圍籬。
 
 {
+  "echo": { "age_years": 輸入中的年齡數字, "dcsi": 輸入中的 DCSI 總分（沒有就填 null） },
   "priorities": [
     { "module_id": "已納入的模組代碼", "why": "為什麼這位病人該優先處理這一項" }
   ],
@@ -232,6 +233,14 @@ export const MODULE_SELECTOR_PROMPT = `你是糖尿病衛教報告的輔助判�
 }`;
 
 export type SelectorOutput = {
+  /**
+   * 輸入中的年齡與 DCSI，由判讀器抄回來。
+   *
+   * 輸出檔沒有病人識別碼是刻意的（不把識別資料寫進中介檔），代價是放錯
+   * 資料夾不會有任何症狀——實測就發生過兩位病人的輸出對調，而且是靠肉眼
+   * 讀出「病程 1.6 年」對不上才發現的。抄回兩個數字就能自動核對。
+   */
+  echo: { ageYears: number | null; dcsi: number | null } | null;
   priorities: Array<{ module_id: string; why: string }>;
   clinician_notes: string[];
   data_concerns: string[];
@@ -258,7 +267,11 @@ export function parseModuleSelection(raw: string): SelectorOutput {
   const strings = (value: unknown): string[] =>
     Array.isArray(value) ? value.filter((item) => typeof item === "string").map(String) : [];
 
+  const echoRaw = (record.echo ?? null) as Record<string, unknown> | null;
+  const num = (value: unknown) => (typeof value === "number" && Number.isFinite(value) ? value : null);
+
   return {
+    echo: echoRaw ? { ageYears: num(echoRaw.age_years), dcsi: num(echoRaw.dcsi) } : null,
     priorities: (Array.isArray(record.priorities) ? record.priorities : [])
       .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
       .map((item) => ({ module_id: String(item.module_id ?? "").trim(), why: String(item.why ?? "").trim() }))
