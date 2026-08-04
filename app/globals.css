@@ -317,6 +317,125 @@ textarea { font-family: inherit; resize: vertical; }
   font-size: 12px; line-height: 1.75;
 }
 
+/* ── 判定路徑 ─────────────────────────────────────────── */
+.traceToggle { margin: 14px 0 0; }
+.traceToggle > summary {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 7px 14px;
+  border: 1px solid var(--line); border-radius: 999px;
+  background: white; color: var(--teal-dark);
+  font-size: 12px; font-weight: 700;
+  cursor: pointer; list-style: none;
+}
+.traceToggle > summary::-webkit-details-marker { display: none; }
+.traceToggle > summary::before { content: "▸"; color: var(--muted); }
+.traceToggle[open] > summary::before { content: "▾"; }
+
+.traceBoard { margin: 16px 0 0; }
+.traceLead { margin: 0 0 16px; color: var(--muted); font-size: 12px; line-height: 1.7; }
+
+.traceStage {
+  margin: 0 0 10px;
+  padding: 16px 18px;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: white;
+}
+.traceStageHead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.traceStep {
+  flex: none;
+  width: 22px; height: 22px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--ink); color: white;
+  font-size: 11px; font-weight: 800;
+}
+.traceStageHead h4 { margin: 0; color: var(--ink); font-size: 14px; font-weight: 750; }
+.traceCount {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--paper); color: var(--muted);
+  font-size: 11px; font-weight: 650;
+}
+.traceNote { margin: 8px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.traceEmpty { margin: 10px 0 0; color: var(--muted); font-size: 12px; }
+
+.traceRows { margin: 12px 0 0; padding: 0; list-style: none; }
+/* 訊號 → 結果排成一列；理由另起一行佔滿整寬，才不會把結果擠掉。 */
+.traceRow {
+  margin: 0 0 6px;
+  padding: 9px 12px;
+  display: grid;
+  grid-template-columns: auto auto auto 1fr;
+  align-items: baseline;
+  gap: 4px 10px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: #fcfcfa;
+}
+.traceRow:last-child { margin-bottom: 0; }
+.traceRowOff { opacity: 0.55; }
+.traceSignal {
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--ink); color: white;
+  font-size: 11px; font-weight: 700;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: nowrap;
+}
+.traceArrow { color: var(--muted); font-size: 12px; }
+.traceOutcome {
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px; font-weight: 750;
+  white-space: nowrap;
+}
+.traceEstablished { background: var(--teal-soft); color: var(--teal-dark); }
+.tracePrevention { background: #f7e9cd; color: #67451e; }
+.traceModerate { background: var(--llm-soft); color: #453cab; }
+.traceExcluded { background: var(--paper); color: var(--muted); }
+.traceSubject { color: var(--ink); font-size: 12px; font-weight: 650; }
+.traceValue { color: #2c424a; font-size: 12px; line-height: 1.75; }
+.traceCitation { color: var(--muted); font-size: 11px; white-space: nowrap; }
+/* 理由跨滿整列，接在訊號那一行下面 */
+.traceReason { grid-column: 1 / -1; margin: 2px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+
+.traceSeverity {
+  padding: 3px 9px;
+  border-radius: 6px;
+  font-size: 11px; font-weight: 750;
+  white-space: nowrap;
+}
+.traceSeverity-info { background: var(--paper); color: var(--muted); }
+.traceSeverity-attention { background: #f7e9cd; color: #67451e; }
+.traceSeverity-urgent { background: rgba(168, 60, 53, 0.12); color: #8d322c; }
+.traceLlmTag {
+  padding: 3px 9px;
+  border-radius: 6px;
+  background: var(--llm-soft); color: #453cab;
+  font-size: 11px; font-weight: 750;
+}
+
+.traceOutline { margin: 12px 0 0; padding: 0 0 0 20px; color: #2c424a; font-size: 12px; line-height: 2.1; }
+.traceOutline li { padding: 0; }
+.traceOutlineTag {
+  margin-right: 8px;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--paper); color: var(--muted);
+  font-size: 11px; font-weight: 650;
+}
+.traceOutline code {
+  margin-left: 8px;
+  color: var(--muted); font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+
+@media (max-width: 760px) {
+  /* 窄螢幕擠不下四欄，改成每格自己一行 */
+  .traceRow { grid-template-columns: 1fr; }
+  .traceArrow { display: none; }
+  .traceSignal, .traceOutcome, .traceSeverity, .traceLlmTag { justify-self: start; }
+}
+
 /* ── 內容庫 ───────────────────────────────────────────── */
 .libraryStatus { margin: 14px 0 0; }
 .libraryBadge {

@@ -33,6 +33,9 @@ import {
   CATEGORY_LABEL,
   CATEGORY_ORDER,
   TOPIC_LABEL,
+  TRACE_KIND_CLASS,
+  TRACE_KIND_LABEL,
+  TRACE_SEVERITY_LABEL,
   TYPE_GATE_LABEL,
   VARIANT_WHEN_LABEL,
 } from "../app/lib/content-labels.ts";
@@ -2461,4 +2464,37 @@ test("三份固定內容都標了版本，且未核准前不得標成已核准",
   assert.equal(MODULE_CATALOG_APPROVED, false);
   assert.equal(SELF_CARE_APPROVED, false);
   assert.equal(RULES_APPROVED, false);
+});
+
+test("判定路徑：每一種判定結果都要有標籤，不得空白", () => {
+  // 主題那一列的結果欄若沒有標籤就是一片空白，看起來像程式沒判到，
+  // 而實際上是判了但顯示不出來——這比顯示錯的更難察覺。
+  const facts = extractPatientFacts({
+    userInput: {
+      REPORT_DATE: "2026-08-03",
+      R3: 2,
+      R5: 1,
+      PR1: PR_HIGH,
+      PR4: PR_MODERATE,
+      PR6: PR_LOW,
+    },
+    rawSources: {},
+  });
+  const decisions = decideTopics(facts);
+
+  // 這份 fixture 要涵蓋全部四種結果，否則測不到漏標籤
+  assert.deepEqual(
+    [...new Set(decisions.map((item) => item.kind))].sort(),
+    ["established", "excluded", "prevention-active", "prevention-moderate"],
+  );
+  for (const decision of decisions) {
+    assert.ok(TRACE_KIND_LABEL[decision.kind], `判定結果 ${decision.kind} 沒有標籤`);
+    assert.ok(TRACE_KIND_CLASS[decision.kind], `判定結果 ${decision.kind} 沒有樣式`);
+  }
+
+  // 門檻判定的嚴重度同理。增加種類時這裡要一起改。
+  assert.deepEqual(Object.keys(TRACE_SEVERITY_LABEL).sort(), ["attention", "info", "urgent"]);
+  for (const hit of resolvePlan(null, facts).labThresholds) {
+    assert.ok(TRACE_SEVERITY_LABEL[hit.severity], `嚴重度 ${hit.severity} 沒有標籤`);
+  }
 });

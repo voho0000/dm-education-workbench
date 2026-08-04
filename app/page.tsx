@@ -3,6 +3,7 @@
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { BUILD_ID } from "./build-id";
 import { ContentLibrary } from "./content-library";
+import { DecisionTrace } from "./decision-trace";
 import { hasHardBlocker, runBlockers, type Blocker } from "./lib/blockers";
 import { buildRunInput, type ComposedInput } from "./lib/build-input";
 import { MODULE_CATALOG_VERSION } from "./lib/education-modules";
@@ -563,7 +564,7 @@ export default function Home() {
           </div>
         </div>
 
-        {preview ? (
+        {preview && patientFacts ? (
           <>
             <dl className="factGrid">
               <div>
@@ -591,7 +592,10 @@ export default function Home() {
                 <dd>{preview.targets.targets.filter((item) => item.value).length} 項</dd>
               </div>
             </dl>
-            <p className="fieldNote">以上完全由程式判定，不需要 API 金鑰，也不會因為換模型而改變。</p>
+            <details className="traceToggle" open>
+              <summary>看這位病人實際跑出來的判定路徑</summary>
+              <DecisionTrace plan={preview} facts={patientFacts} />
+            </details>
           </>
         ) : null}
         </div>

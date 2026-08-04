@@ -1,13 +1,15 @@
 /**
- * 內容庫檢視器用的中文標籤。
+ * 頁面上用到的中文標籤對照表（內容庫與判定路徑）。
  *
  * 為什麼不寫在元件裡：這些對照表要能被測試檢查「有沒有漏」。
- * 資料裡新增一個主題代碼或規則類別時，若這裡忘了補，畫面上就會出現
- * 生的英文代碼（甚至整組規則排不進順序裡），而審閱的人不會知道少了什麼。
+ * 資料裡新增一個主題代碼、規則類別或判定種類時，若這裡忘了補，
+ * 畫面上就會出現生的英文代碼、空白，甚至整組規則排不進順序裡，
+ * 而審閱的人不會知道少了什麼。
  */
 
 import type { EducationModule } from "./education-modules.ts";
 import type { RuleCategory } from "./guideline-rules.ts";
+import type { TopicKind } from "./module-plan.ts";
 import type { SelfCareModule } from "./self-care-modules.ts";
 
 export const TOPIC_LABEL: Record<EducationModule["topic"], string> = {
@@ -65,3 +67,25 @@ export const CATEGORY_ORDER: RuleCategory[] = [
   "medication-safety",
   "measurement-caveat",
 ];
+
+/** 判定路徑：主題的納入方式。少一個就是那一列的結果欄空白。 */
+export const TRACE_KIND_LABEL: Record<TopicKind, string> = {
+  established: "已發生・完整模組",
+  "prevention-active": "尚未發生・預防內容",
+  "prevention-moderate": "尚未發生・簡短提醒",
+  excluded: "不納入",
+};
+
+export const TRACE_KIND_CLASS: Record<TopicKind, string> = {
+  established: "traceOutcome traceEstablished",
+  "prevention-active": "traceOutcome tracePrevention",
+  "prevention-moderate": "traceOutcome traceModerate",
+  excluded: "traceOutcome traceExcluded",
+};
+
+/** 門檻判定的嚴重度。ThresholdHit 的 severity 若增加種類，這裡要一起改。 */
+export const TRACE_SEVERITY_LABEL: Record<string, string> = {
+  info: "留意",
+  attention: "需注意",
+  urgent: "需儘速處理",
+};
