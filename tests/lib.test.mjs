@@ -3,8 +3,8 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { GUIDELINE_KNOWN_CHARS, GUIDELINE_KNOWN_TOKENS, estimateTokens, guidelineTokens } from "../app/lib/tokens.ts";
-import { buildArmCInput, buildEvalInput, buildGenerationInput, GUIDELINE_HEADING } from "../app/lib/build-input.ts";
-import { evalBlockers, generateBlockers, hasHardBlocker } from "../app/lib/blockers.ts";
+import { buildRunInput } from "../app/lib/build-input.ts";
+import { hasHardBlocker, runBlockers } from "../app/lib/blockers.ts";
 import { describeGeminiFailure } from "../app/lib/gemini-errors.ts";
 import { formatPatientJson } from "../app/lib/format-patient.ts";
 import { extractPatientFacts } from "../app/lib/patient-facts.ts";
@@ -28,20 +28,6 @@ import { extractLabFindings, lowestMeasuredGlucose } from "../app/lib/lab-findin
 import { parseLabNarrative, formatLabNarrative, LAB_NARRATIVE_PROMPT } from "../app/lib/lab-narrative.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
 
-const baseState = {
-  arm: "A",
-  llmText: "病人資料",
-  rawInput: "{}",
-  generatorPrompt: "prompt",
-  evalPrompt: "eval prompt",
-  report: "報告",
-  model: "gemini-3.6-flash",
-  apiKey: "",
-  requiresClientKey: false,
-  guidelineText: "",
-  totalTokens: 1000,
-  tokenLimit: 1_048_576,
-};
 
 const T2 = { medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01" }] } };
 
@@ -70,80 +56,50 @@ test("字元數與已知全文不符時，token 數標示為估算而非硬套�
 
 // ── 輸入組裝 ──────────────────────────────────────────────────
 
-test("B 模式不截斷任何內容", () => {
-  const patientText = "病人資料".repeat(500);
-  const guidelineText = "指引內容".repeat(20_000);
-  const composed = buildGenerationInput({
-    systemPrompt: "系統提示",
-    patientText,
-    includeGuideline: true,
-    guidelineText,
+test("三次呼叫的輸入不截斷任何內容", () => {
+  const facts = "F".repeat(5_000);
+  const lab = "L".repeat(50_000);
+  const composed = buildRunInput({
+    selectorPrompt: "S",
+    factsText: facts,
+    labReviewPrompt: "R",
+    labText: lab,
+    narrativePrompt: "N",
+    narrativeText: lab,
   });
-
-  assert.equal(composed.guidelineIncluded, true);
-  assert.ok(composed.text.includes(guidelineText), "指引全文必須逐字出現在輸入中");
-  assert.equal(
-    [...composed.text].length,
-    [...patientText].length + [...`\n\n${GUIDELINE_HEADING}\n`].length + [...guidelineText].length,
-    "組出的長度必須等於各段長度相加，代表沒有任何截斷",
-  );
+  // 組出的長度必須等於各段長度相加，代表沒有任何一段被切掉
+  assert.equal(composed.totalChars, 1 + facts.length + 1 + lab.length + 1 + lab.length);
+  assert.ok(composed.text.includes(lab), "檢驗紀錄必須逐字出現在輸入中");
 });
 
-test("選了帶入指引但指引是空的，guidelineIncluded 必須回報 false", () => {
-  const composed = buildGenerationInput({
-    systemPrompt: "系統提示",
-    patientText: "病人資料",
-    includeGuideline: true,
-    guidelineText: "   ",
-  });
-  assert.equal(composed.guidelineIncluded, false, "靜默降級必須被看見");
-  assert.equal(composed.guidelineRequestedButMissing, true);
-});
-
-test("稽核輸入同時包含病人資料、待評估報告與指引", () => {
-  const composed = buildEvalInput({
-    systemPrompt: "稽核提示",
-    patientText: "PATIENT",
-    report: "REPORT",
-    includeGuideline: true,
-    guidelineText: "GUIDELINE",
-  });
-  assert.ok(composed.text.includes("【病人資料】"));
-  assert.ok(composed.text.includes("【待評估報告】"));
-  assert.ok(composed.text.includes("GUIDELINE"));
-  assert.equal(composed.parts.length, 4);
-});
-
-// ── 阻擋原因 ──────────────────────────────────────────────────
-
-test("generateBlockers 覆蓋七種阻擋情境，且每一條都有解法", () => {
+test("runBlockers 覆蓋五種阻擋情境，且每一條都有解法", () => {
+  const base = {
+    rawInput: '{"a":1}',
+    parsedJson: true,
+    model: "gemini-3.6-flash",
+    apiKey: "key",
+    requiresClientKey: false,
+    totalTokens: 1000,
+    tokenLimit: 1_048_576,
+  };
   const cases = [
-    { name: "沒有病人資料", state: { llmText: "", rawInput: "" }, code: "no-patient-data" },
-    { name: "有原始資料但沒整理", state: { llmText: "", rawInput: '{"a":1}' }, code: "not-formatted" },
-    { name: "prompt 空白", state: { generatorPrompt: "  " }, code: "empty-generator-prompt" },
+    { name: "沒有病人資料", state: { rawInput: "", parsedJson: false }, code: "no-input" },
+    { name: "不是 JSON", state: { rawInput: "純文字", parsedJson: false }, code: "not-json" },
     { name: "沒有模型", state: { model: "" }, code: "no-model" },
-    { name: "GitHub Pages 沒有金鑰", state: { requiresClientKey: true, apiKey: "" }, code: "no-api-key" },
-    { name: "選 B 但沒載入指引", state: { arm: "B", guidelineText: "" }, code: "guideline-missing" },
-    { name: "超過 token 上限", state: { totalTokens: 2_000_000 }, code: "token-limit" },
+    { name: "GitHub Pages 沒有金鑰", state: { requiresClientKey: true, apiKey: "" }, code: "no-key" },
+    { name: "超過 token 上限", state: { totalTokens: 2_000_000 }, code: "over-limit" },
   ];
 
   for (const item of cases) {
-    const blockers = generateBlockers({ ...baseState, ...item.state });
+    const blockers = runBlockers({ ...base, ...item.state });
     const found = blockers.find((blocker) => blocker.code === item.code);
     assert.ok(found, `${item.name}：應該產生 ${item.code}`);
     assert.ok(found.message.length > 0, `${item.name}：必須說明發生什麼事`);
     assert.ok(found.howToFix.length > 0, `${item.name}：必須說明怎麼解決`);
     assert.equal(hasHardBlocker(blockers), true);
   }
-});
 
-test("一切就緒時沒有任何阻擋", () => {
-  assert.deepEqual(generateBlockers(baseState), []);
-  assert.deepEqual(evalBlockers(baseState), []);
-});
-
-test("evalBlockers 在沒有報告時會擋下", () => {
-  assert.ok(evalBlockers({ ...baseState, report: "" }).some((item) => item.code === "no-report"));
+  assert.deepEqual(runBlockers(base), [], "一切就緒時沒有任何阻擋");
 });
 
 // ── 錯誤轉譯 ──────────────────────────────────────────────────
@@ -2437,8 +2393,8 @@ test("生病日衛教依藥物類別觸發，並轉成「事先確認」而非�
   assert.ok(!metformin.includes("酮酸中毒"), "非 SGLT2i 使用者不該看到那一段");
 });
 
-test("arm C 的輸入估算要涵蓋三次呼叫，不能只算模組挑選那一次", () => {
-  const input = buildArmCInput({
+test("輸入估算要涵蓋三次呼叫，不能只算模組挑選那一次", () => {
+  const input = buildRunInput({
     selectorPrompt: "S".repeat(100),
     factsText: "F".repeat(200),
     labReviewPrompt: "R".repeat(300),

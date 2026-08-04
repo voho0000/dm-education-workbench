@@ -9,11 +9,11 @@ const notoSansTc = Noto_Sans_TC({
 });
 
 export const metadata: Metadata = {
-  title: "糖尿病衛教報告工作台",
-  description: "將病人 JSON 或純文字資料整理成 LLM 好讀格式，使用 Gemini 生成糖尿病衛教報告並完成獨立品質稽核。",
+  title: "糖尿病衛教報告產生器",
+  description: "從健保申報 JSON 產出病人版衛教報告與醫師版摘要。併發症主題與指引目標由程式判定，LLM 只負責規則做不到的部分。",
   openGraph: {
-    title: "糖尿病衛教報告工作台",
-    description: "病人資料整理、Gemini 報告生成與品質稽核，集中在同一頁完成。",
+    title: "糖尿病衛教報告產生器",
+    description: "一份健保申報 JSON，兩份可用的報告。",
     images: ["/og.png"],
   },
   icons: {

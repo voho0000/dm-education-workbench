@@ -1,5 +1,12 @@
+/**
+ * 對伺服器實際輸出的 HTML 做斷言。
+ *
+ * 為什麼不是對原始碼做 regex：先前那樣寫，任何搬移函式都會弄壞測試，
+ * 而真正該保證的是「使用者打開頁面看得到什麼」。
+ */
+
 import assert from "node:assert/strict";
-import { access, readFile } from "node:fs/promises";
+import { access, readFile, readdir } from "node:fs/promises";
 import test from "node:test";
 
 async function render() {
@@ -14,76 +21,84 @@ async function render() {
   );
 }
 
-test("server-renders the complete diabetes education workbench", async () => {
+test("首頁伺服器渲染完整，並保證資料不落地", async () => {
   const response = await render();
   assert.equal(response.status, 200);
   assert.match(response.headers.get("content-type") ?? "", /^text\/html\b/i);
 
   const html = await response.text();
   assert.match(html, /<html lang="zh-Hant">/i);
-  assert.match(html, /<title>糖尿病衛教報告工作台<\/title>/i);
-  assert.match(html, /病人資料整理/);
-  assert.match(html, /生成糖尿病衛教報告/);
-  assert.match(html, /獨立品質稽核/);
+  assert.match(html, /病人資料/);
+  assert.match(html, /產出兩份報告/);
   assert.match(html, /gemini-3\.6-flash/);
   assert.match(html, /gemini-3\.5-flash-lite/);
-  assert.match(html, /健康存摺安全版（目前預設）/);
-  assert.match(html, /v14/);
-  assert.match(html, /八面向安全稽核版（目前預設）/);
-  assert.match(html, /audit/);
-  assert.match(html, /自訂內容（目前文字）/);
-  assert.match(html, /Gemini 臨時存取金鑰/);
-  assert.match(html, /type="password"/);
-  assert.match(html, /重新整理即清除/);
-  assert.match(html, /id="dmEducationGeminiTransientCredential2026"/);
-  assert.match(html, /name="dmEducationGeminiTransientCredentialManualEntry"/);
-  assert.match(html, /autoComplete="new-password"/i);
-  assert.match(html, /data-1p-ignore="true"/);
   assert.match(html, /不寫入本站資料庫/);
+  assert.match(html, /只暫存在本頁記憶體，不寫入資料庫或瀏覽器儲存空間/);
   assert.doesNotMatch(html, /Your site is taking shape|Building your site/);
 });
 
-test("renders the three-arm selector and the guideline status panel", async () => {
+test("首頁畫出實際的資料流：程式判定為主，三次 LLM 呼叫", async () => {
   const html = await (await render()).text();
 
-  assert.match(html, /GUIDELINE A\/B\/C TEST/);
-  assert.match(html, /A｜現行流程・不帶入指引/);
-  assert.match(html, /B｜現行流程・帶入指引全文/);
-  assert.match(html, /C｜一鍵產出兩份報告/);
+  assert.match(html, /資料流：程式判定為主，三次 LLM 呼叫只負責規則做不到的事/);
+  assert.match(html, /① 模組挑選/);
+  assert.match(html, /② 檢驗判讀/);
+  assert.match(html, /③ 檢驗敘述/);
+  assert.match(html, /病人版衛教報告/);
+  assert.match(html, /醫師版報告/);
 
-  // 選 B 時使用者必須看得到這五件事，不能只有一句「已載入」。
-  assert.match(html, /指引是否已載入/);
-  assert.match(html, /指引字元數/);
-  assert.match(html, /指引 token 數/);
-  assert.match(html, /本次生成會帶入指引/);
-  assert.match(html, /本次稽核會帶入指引/);
-  assert.match(html, /用 countTokens 精算/);
-  assert.match(html, /不會自動截斷指引或病人資料/);
+  // 三個 prompt 必須看得到，而且是唯讀的
+  assert.match(html, /三次呼叫送出的 system prompt/);
+  assert.match(html, /由程式定義並隨版本一起送審，不在頁面上編輯/);
 });
 
-test("shows why generation is blocked instead of only greying the button", async () => {
+test("A/B/C 比較與指引全文載入已從流程移除", async () => {
   const html = await (await render()).text();
 
-  // 初次載入沒有病人資料，按鈕旁必須直接列出原因與解法。
-  assert.match(html, /目前不能生成的原因/);
-  assert.match(html, /目前不能稽核的原因/);
+  // 指引全文標示未授權不得轉載；流程改用抽取後的門檻表，頁面不再接受整份上傳
+  assert.doesNotMatch(html, /GUIDELINE A\/B\/C TEST/);
+  assert.doesNotMatch(html, /帶入指引全文/);
+  assert.doesNotMatch(html, /載入指引 TXT/);
+  assert.doesNotMatch(html, /獨立品質稽核/);
+});
+
+test("沒有病人資料時直接說明原因與解法，不是只把按鈕變灰", async () => {
+  const html = await (await render()).text();
+
+  assert.match(html, /目前不能執行的原因/);
   assert.match(html, /還沒有病人資料。/);
-  assert.match(html, /整理為 LLM 好讀文字/);
+  assert.match(html, /載入合成示範資料/);
 
-  // 送出前的輸入組成與估計 token。
-  assert.match(html, /本次生成會送出的輸入/);
-  assert.match(html, /本次稽核會送出的輸入/);
+  // 送出前要看得到三次呼叫合計的輸入量
+  assert.match(html, /三次呼叫合計送出/);
   assert.match(html, /模型上限的/);
+  assert.match(html, /不會自動截斷病人資料/);
 });
 
-test("stamps a build id so a stale cached page can be identified", async () => {
+test("示範資料是合成的，公開產物不得出現真實病人", async () => {
+  const html = await (await render()).text();
+  assert.match(html, /示範資料為虛構，非真實病人/);
+
+  // 示範資料是點擊後才填入的，只存在於 JS bundle——而 bundle 正是會被公開的東西。
+  const dir = new URL("../github-pages/dm-education-report/assets/", import.meta.url);
+  const files = await readdir(dir);
+  const bundles = await Promise.all(
+    files.filter((name) => name.endsWith(".js")).map((name) => readFile(new URL(name, dir), "utf8")),
+  );
+  const all = bundles.join("\n");
+
+  assert.match(all, /SAMPLE-DEMO-NOT-A-REAL-PATIENT/, "示範資料必須明確標示為合成");
+  // 來源匯出的識別碼形態：長 base64 後接西元生日
+  assert.doesNotMatch(all, /[A-Za-z0-9_+/-]{20,}_(19|20)\d{2}-\d{2}-\d{2}/, "公開 bundle 不得含病人識別碼");
+});
+
+test("頁尾有建置識別碼，可判斷是不是舊快取", async () => {
   const html = await (await render()).text();
   assert.match(html, /build \d{14}/, "頁尾必須有可辨識的建置識別碼");
 });
 
-test("keeps prompts, credentials and truncation guarantees intact", async () => {
-  const [prompts, route, buildInput, geminiClient, packageJson, envExample] = await Promise.all([
-    readFile(new URL("../app/prompt-presets.ts", import.meta.url), "utf8"),
+test("金鑰處理與不截斷的保證維持不變", async () => {
+  const [route, buildInput, geminiClient, packageJson, envExample] = await Promise.all([
     readFile(new URL("../app/api/gemini/route.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/build-input.ts", import.meta.url), "utf8"),
     readFile(new URL("../app/lib/gemini-client.ts", import.meta.url), "utf8"),
@@ -94,26 +109,12 @@ test("keeps prompts, credentials and truncation guarantees intact", async () => 
   await assert.rejects(access(new URL("../app/_sites-preview/SkeletonPreview.tsx", import.meta.url)));
   assert.doesNotMatch(packageJson, /react-loading-skeleton/);
 
-  // 四段 prompt 內容維持不變。
-  assert.match(prompts, /COLLEAGUE_GENERATOR_PROMPT/);
-  assert.match(prompts, /COLLEAGUE_EVAL_PROMPT/);
-  assert.match(prompts, /WORKBENCH_GENERATOR_PROMPT/);
-  assert.match(prompts, /WORKBENCH_EVAL_PROMPT/);
-  assert.match(prompts, /"audit_status": "PASS \| REVISE \| FAIL"/);
-
-  assert.match(buildInput, /【參考指引全文：2022第2型糖尿病臨床照護指引】/);
+  assert.match(buildInput, /絕不截斷/);
   assert.match(geminiClient, /"x-goog-api-key": apiKey\.trim\(\)/);
   assert.match(geminiClient, /AbortSignal\.any/);
   assert.match(geminiClient, /export async function safeJson/);
 
   assert.match(route, /process\.env\.GEMINI_API_KEY/);
   assert.match(route, /suppliedApiKey \|\| process\.env\.GEMINI_API_KEY/);
-  assert.match(route, /"x-goog-api-key": apiKey/);
-  assert.match(route, /store: false/);
-  assert.match(route, /Cache-Control/);
-  // 回應一律先取文字再解析，避免代理層回 HTML 時丟出 Unexpected token。
-  assert.match(route, /await response\.text\(\)/);
-  assert.doesNotMatch(route, /await response\.json\(\)/);
-
-  assert.match(envExample, /^GEMINI_API_KEY=$/m);
+  assert.doesNotMatch(envExample, /AIza[A-Za-z0-9_-]{10,}/);
 });

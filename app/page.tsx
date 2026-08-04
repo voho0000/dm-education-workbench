@@ -1,21 +1,16 @@
 "use client";
 
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
-import {
-  EVAL_PROMPT_PRESETS,
-  GENERATOR_PROMPT_PRESETS,
-  PromptPresetId,
-  WORKBENCH_EVAL_PROMPT,
-  WORKBENCH_GENERATOR_PROMPT,
-} from "./prompt-presets";
 import { BUILD_ID } from "./build-id";
-import { ARMS, type ArmId, armById } from "./lib/arms";
-import { evalBlockers, generateBlockers, hasHardBlocker, type Blocker, type WorkbenchState } from "./lib/blockers";
-import { buildArmCInput, buildEvalInput, buildGenerationInput, type ComposedInput } from "./lib/build-input";
-import { formatPatientJson } from "./lib/format-patient";
-import { GeminiRequestError, callGemini, countTokens } from "./lib/gemini-client";
-import { describeGeminiFailure, type GeminiFailure } from "./lib/gemini-errors";
+import { hasHardBlocker, runBlockers, type Blocker } from "./lib/blockers";
+import { buildRunInput, type ComposedInput } from "./lib/build-input";
 import { MODULE_CATALOG_VERSION } from "./lib/education-modules";
+import { formatPatientJson } from "./lib/format-patient";
+import { GeminiRequestError, callGemini } from "./lib/gemini-client";
+import { describeGeminiFailure, type GeminiFailure } from "./lib/gemini-errors";
+import { RULES_SOURCE, RULES_VERSION } from "./lib/guideline-rules";
+import { LAB_NARRATIVE_PROMPT, buildNarrativeInput, parseLabNarrative } from "./lib/lab-narrative";
+import { LAB_REVIEW_PROMPT, labSectionOf, parseLabReview } from "./lib/lab-llm";
 import {
   MODULE_SELECTOR_PROMPT,
   assembleClinicianReport,
@@ -25,25 +20,18 @@ import {
   resolvePlan,
 } from "./lib/module-plan";
 import { extractPatientFacts, factsForSelectorPrompt } from "./lib/patient-facts";
-import { LAB_REVIEW_PROMPT, labSectionOf, parseLabReview } from "./lib/lab-llm";
-import { LAB_NARRATIVE_PROMPT, buildNarrativeInput, parseLabNarrative } from "./lib/lab-narrative";
-import {
-  DEFAULT_INPUT_TOKEN_LIMIT,
-  GUIDELINE_KNOWN_CHARS,
-  GUIDELINE_KNOWN_TOKENS,
-  charCount,
-  formatNumber,
-  guidelineTokens,
-} from "./lib/tokens";
+import { SELF_CARE_VERSION } from "./lib/self-care-modules";
+import { DEFAULT_INPUT_TOKEN_LIMIT, charCount, formatNumber } from "./lib/tokens";
 
-type Stage = "idle" | "formatting" | "generating" | "evaluating" | "counting";
+type Stage = "idle" | "running";
+type OutputTab = "patient" | "clinician";
+type PromptId = "selector" | "labReview" | "narrative";
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
 const DEFAULT_MODEL = "gemini-3.6-flash";
 const CUSTOM_MODEL = "__custom__";
 const GEMINI_CREDENTIAL_INPUT_ID = "dmEducationGeminiTransientCredential2026";
 const DEFAULT_TIMEOUT_MINUTES = 15;
-const GUIDELINE_LIKE_CHARS = 200_000;
 
 const MODEL_OPTIONS = [
   { value: "gemini-3.6-flash", label: "Gemini 3.6 Flash｜預設・較高品質" },
@@ -51,26 +39,63 @@ const MODEL_OPTIONS = [
   { value: CUSTOM_MODEL, label: "自訂模型 ID" },
 ];
 
+const PROMPTS: Array<{ id: PromptId; label: string; text: string; role: string }> = [
+  {
+    id: "selector",
+    label: "① 模組挑選",
+    role: "只回模組代碼、優先序與異議。它寫的任何文字都不會出現在報告裡。",
+    text: MODULE_SELECTOR_PROMPT,
+  },
+  {
+    id: "labReview",
+    label: "② 檢驗判讀",
+    role: "讀原始檢驗紀錄判斷異常，結果進醫師版。程式逐一比對它引用的每一個數值。",
+    text: LAB_REVIEW_PROMPT,
+  },
+  {
+    id: "narrative",
+    label: "③ 檢驗敘述",
+    role: "把檢驗結果寫成給病人看的段落。這是報告中唯一未經逐句核准的文字。",
+    text: LAB_NARRATIVE_PROMPT,
+  },
+];
+
+/**
+ * 示範資料。**這是完全虛構的合成資料，不是任何真實病人。**
+ *
+ * 這個頁面部署在公開網址，任何寫在這裡的東西都會出現在 JS bundle 裡。
+ * 數值刻意選成整數或明顯的示範值，識別欄位一律 SAMPLE。
+ */
 const SAMPLE_INPUT = `{
   "downloadType": "DiabetesEducation",
-  "userInfo": { "資料代碼": "DEMO-001" },
+  "userInfo": { "userId": "SAMPLE-DEMO-NOT-A-REAL-PATIENT", "gender": "F", "birthday": "1960/01/01" },
   "userInput": {
-    "REPORT_DATE": "2026-08-03",
-    "SEX": "F",
+    "REPORT_DATE": "2026-08-01",
+    "BIRTHDAY": "1960-01-01",
+    "SEX": "1",
     "T": 8,
-    "DCSI": 2,
-    "R1": 1,
-    "PR1": 2
+    "DCSI": 3,
+    "CKD": 1,
+    "R5": 2,
+    "PR1": 2,
+    "PR4": 1,
+    "PR6": 0
   },
   "rawSources": {
     "medication": {
       "rObject": [
-        { "drug_date": "2026-01-20", "icd_code": "E11.9", "icd_cname": "第2型糖尿病", "drug_ename": "METFORMIN", "drug_fre": "BID", "day": 28 }
+        { "drug_date": "2026-01-10", "icd_code": "E119", "icd_cname": "第2型糖尿病", "drug_atc5_name": "其他抗糖尿病藥物", "drug_ing_name": "METFORMIN HCL", "drug_fre": "BID", "day": 28 },
+        { "drug_date": "2026-01-10", "icd_code": "E119", "icd_cname": "第2型糖尿病", "drug_atc5_name": "抗糖尿病藥物", "drug_ing_name": "DAPAGLIFLOZIN", "drug_fre": "QD", "day": 28 }
       ]
     },
     "labData": {
       "rObject": [
-        { "fee_ym": "202601", "order_code": "09006C", "order_name": "糖化血色素", "assay_item_name": "HbA1c", "assay_value": "8.2", "unit_data": "%", "consult_value": "4.0-6.0" }
+        { "fee_ym": "202601", "order_code": "09006C", "order_name": "醣化血紅素", "assay_item_name": "HbA1c", "assay_value": "9.0", "unit_data": "%", "consult_value": "[4.0][6.0]" },
+        { "fee_ym": "202601", "order_code": "09005C", "order_name": "血液及體液葡萄糖-空腹", "assay_item_name": "Glu-AC", "assay_value": "200", "unit_data": "mg/dL", "consult_value": "[70][100]" },
+        { "fee_ym": "202601", "order_code": "09005C", "order_name": "血液及體液葡萄糖-空腹", "assay_item_name": "Glu-AC", "assay_value": "60", "unit_data": "mg/dL", "consult_value": "[70][100]" },
+        { "fee_ym": "202601", "order_code": "09015C", "order_name": "腎絲球過濾率", "assay_item_name": "eGFR", "assay_value": "45.0", "unit_data": "mL/min/1.73m2", "consult_value": "[90][]" },
+        { "fee_ym": "202601", "order_code": "09011C", "order_name": "鉀", "assay_item_name": "K", "assay_value": "3.4", "unit_data": "mmol/L", "consult_value": "[3.5][5.1]" },
+        { "fee_ym": "202601", "order_code": "08011C", "order_name": "血色素檢查", "assay_item_name": "Hb", "assay_value": "10.0", "unit_data": "g/dL", "consult_value": "[[≧18y]M 13.1-17.2 F 11.0-15.2][]" }
       ]
     }
   }
@@ -86,26 +111,11 @@ function downloadText(filename: string, content: string) {
   URL.revokeObjectURL(url);
 }
 
-function charLabel(value: string) {
-  return `${formatNumber(charCount(value))} 字`;
-}
-
-function verdictFromEval(value: string) {
-  const jsonStatus = value.match(/"audit_status"\s*:\s*"(PASS|REVISE|FAIL)"/i)?.[1]?.toUpperCase();
-  const textStatus = value.match(/(?:^|\n)\s*(?:##\s*稽核結論\s*\n\s*)?(PASS|REVISE|NEEDS_REVIEW|FAIL)\b/im)?.[1]?.toUpperCase();
-  const status = jsonStatus || textStatus;
-  if (status === "FAIL") return { label: "FAIL", tone: "danger" };
-  if (status === "REVISE") return { label: "REVISE", tone: "warning" };
-  if (status === "NEEDS_REVIEW") return { label: "需人工覆核", tone: "warning" };
-  if (status === "PASS") return { label: "PASS", tone: "success" };
-  return { label: "已完成", tone: "neutral" };
-}
-
-function BlockerList({ blockers, label }: { blockers: Blocker[]; label: string }) {
+function BlockerList({ blockers }: { blockers: Blocker[] }) {
   if (!blockers.length) return null;
   return (
     <div className="blockerList" role="status">
-      <strong>{label}</strong>
+      <strong>目前不能執行的原因</strong>
       <ul>
         {blockers.map((item) => (
           <li key={item.code} className={item.hard ? "hard" : "soft"}>
@@ -118,13 +128,13 @@ function BlockerList({ blockers, label }: { blockers: Blocker[]; label: string }
   );
 }
 
-function CompositionPanel({ input, title, note }: { input: ComposedInput; title: string; note?: string }) {
+function CompositionPanel({ input }: { input: ComposedInput }) {
   const overLimit = input.totalTokens > DEFAULT_INPUT_TOKEN_LIMIT;
   const percent = Math.min(999, Math.round((input.totalTokens / DEFAULT_INPUT_TOKEN_LIMIT) * 100));
   return (
     <details className="compositionPanel">
       <summary>
-        {title}：約 {formatNumber(input.totalTokens)} tokens（{formatNumber(input.totalChars)} 字）
+        三次呼叫合計送出：約 {formatNumber(input.totalTokens)} tokens（{formatNumber(input.totalChars)} 字）
         <span className={overLimit ? "limitBadge over" : "limitBadge"}>模型上限的 {percent}%</span>
       </summary>
       <table>
@@ -134,72 +144,94 @@ function CompositionPanel({ input, title, note }: { input: ComposedInput; title:
               <th>{part.label}</th>
               <td>{formatNumber(part.chars)} 字</td>
               <td>
-                約 {formatNumber(part.tokens)} tokens
-                <em>{part.method === "measured" ? "實測" : "估算"}</em>
+                約 {formatNumber(part.tokens)} tokens<em>估算</em>
               </td>
             </tr>
           ))}
-          <tr className="totalRow">
-            <th>合計</th>
-            <td>{formatNumber(input.totalChars)} 字</td>
-            <td>約 {formatNumber(input.totalTokens)} tokens</td>
-          </tr>
         </tbody>
       </table>
-      <p>
-        {note ? `${note} ` : ""}
-        {input.hasEstimate
-          ? "標示「估算」的段落是以字元組成推估，誤差在指引全文上約 0.1%，其他文字可能更大；需要精確值請按「用 countTokens 精算」。"
-          : "所有段落都是 Gemini 官方實測值。"}
+      <p className="fieldNote">
+        ②③ 讀的是同一份檢驗紀錄，重複的部分在這裡看得見。本工具在任何情況下都不會自動截斷病人資料。
       </p>
     </details>
   );
 }
 
+/** 流程圖。畫的是實際的資料流——每個方框都對應一個函式或一次呼叫。 */
+function FlowDiagram() {
+  const box = (x: number, y: number, w: number, title: string, sub: string, tone: string) => (
+    <g key={`${x}-${y}`} className={tone}>
+      <rect x={x} y={y} width={w} height={48} rx={6} />
+      <text className="flowTitle" x={x + w / 2} y={y + 21} textAnchor="middle">
+        {title}
+      </text>
+      <text className="flowSub" x={x + w / 2} y={y + 38} textAnchor="middle">
+        {sub}
+      </text>
+    </g>
+  );
+  return (
+    <svg
+      className="flowDiagram"
+      viewBox="0 0 720 296"
+      role="img"
+      aria-label="資料流：程式判定為主，三次 LLM 呼叫只負責規則做不到的事"
+    >
+      <defs>
+        <marker id="flowArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
+          <path d="M2 1L8 5L2 9" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
+        </marker>
+      </defs>
+      {box(16, 16, 196, "健保申報 JSON", "用藥 · 檢驗 · R/PR · DCSI", "flowNeutral")}
+      {box(16, 112, 196, "確定性事實與判定", "主題 · 目標 · 門檻（程式）", "flowNeutral")}
+      {box(262, 16, 196, "① 模組挑選", "只回代碼與優先序", "flowLlm")}
+      {box(262, 112, 196, "② 檢驗判讀", "讀原始紀錄", "flowLlm")}
+      {box(262, 208, 196, "③ 檢驗敘述", "寫成病人看的段落", "flowLlm")}
+      {box(508, 112, 196, "驗證與組裝", "數值比對 · 禁止事項", "flowNeutral")}
+      {box(508, 16, 196, "病人版衛教報告", "正文來自固定模組", "flowOut")}
+      {box(508, 208, 196, "醫師版報告", "附指引章表與頁次", "flowOut")}
+      <g className="flowLine" markerEnd="url(#flowArrow)">
+        <path d="M114 64 L114 112" />
+        <path d="M212 40 L262 40" />
+        <path d="M212 136 L262 136" />
+        <path d="M212 152 L237 152 L237 232 L262 232" />
+        <path d="M458 40 L483 40 L483 130 L508 130" />
+        <path d="M458 136 L508 136" />
+        <path d="M458 232 L483 232 L483 142 L508 142" />
+        <path d="M606 112 L606 64" />
+        <path d="M606 160 L606 208" />
+      </g>
+    </svg>
+  );
+}
+
 export default function Home() {
   const [rawInput, setRawInput] = useState("");
-  const [llmText, setLlmText] = useState("");
   const [fileName, setFileName] = useState("");
   const [inputTab, setInputTab] = useState<"raw" | "formatted">("raw");
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [modelChoice, setModelChoice] = useState(DEFAULT_MODEL);
   const [customModel, setCustomModel] = useState("");
-  const [armCPromptId, setArmCPromptId] = useState<"selector" | "labReview" | "narrative">("selector");
-  const [generatorPresetId, setGeneratorPresetId] = useState<PromptPresetId>("workbench");
-  const [evalPresetId, setEvalPresetId] = useState<PromptPresetId>("workbench");
-  const [generatorPrompt, setGeneratorPrompt] = useState(WORKBENCH_GENERATOR_PROMPT);
-  const [evalPrompt, setEvalPrompt] = useState(WORKBENCH_EVAL_PROMPT);
-  const [guidelineText, setGuidelineText] = useState("");
-  const [guidelineFileName, setGuidelineFileName] = useState("");
-  const [guidelineMeasuredTokens, setGuidelineMeasuredTokens] = useState<number | null>(null);
-  const [arm, setArm] = useState<ArmId>("A");
-  const [report, setReport] = useState("");
-  const [clinicianTrace, setClinicianTrace] = useState("");
-  const [evaluation, setEvaluation] = useState("");
+  const [timeoutMinutes, setTimeoutMinutes] = useState(DEFAULT_TIMEOUT_MINUTES);
+  const [promptId, setPromptId] = useState<PromptId>("selector");
+  const [outputTab, setOutputTab] = useState<OutputTab>("patient");
+  const [patientReport, setPatientReport] = useState("");
+  const [clinicianReport, setClinicianReport] = useState("");
+  const [checks, setChecks] = useState<string[]>([]);
   const [stage, setStage] = useState<Stage>("idle");
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
   const [elapsedSeconds, setElapsedSeconds] = useState(0);
-  const [timeoutMinutes, setTimeoutMinutes] = useState(DEFAULT_TIMEOUT_MINUTES);
   const [failure, setFailure] = useState<GeminiFailure | null>(null);
   const [notice, setNotice] = useState("");
   const [dragging, setDragging] = useState(false);
   const [copied, setCopied] = useState("");
-  const fileInputRef = useRef<HTMLInputElement>(null);
-  const guidelineInputRef = useRef<HTMLInputElement>(null);
+
   const abortControllerRef = useRef<AbortController | null>(null);
-  const bannerRef = useRef<HTMLDivElement>(null);
+  const errorRef = useRef<HTMLDivElement | null>(null);
 
-  const busy = stage !== "idle";
-  const verdict = useMemo(() => verdictFromEval(evaluation), [evaluation]);
   const model = modelChoice === CUSTOM_MODEL ? customModel.trim() : modelChoice;
-  const armDef = armById(arm);
-  const armCPrompt =
-    armCPromptId === "labReview" ? LAB_REVIEW_PROMPT : armCPromptId === "narrative" ? LAB_NARRATIVE_PROMPT : MODULE_SELECTOR_PROMPT;
-  const includeGuideline = arm === "B";
-
-  const onGitHubPages =
-    typeof window !== "undefined" && window.location.hostname.endsWith("github.io");
+  const onGitHubPages = typeof window !== "undefined" && window.location.hostname.endsWith("github.io");
 
   const parsedRawJson = useMemo<unknown>(() => {
     const trimmed = rawInput.trim();
@@ -211,431 +243,177 @@ export default function Home() {
     }
   }, [rawInput]);
 
-  const patientFacts = useMemo(
-    () => (parsedRawJson ? extractPatientFacts(parsedRawJson) : null),
-    [parsedRawJson],
-  );
+  const patientFacts = useMemo(() => (parsedRawJson ? extractPatientFacts(parsedRawJson) : null), [parsedRawJson]);
+  const llmText = useMemo(() => (parsedRawJson ? formatPatientJson(parsedRawJson) : ""), [parsedRawJson]);
+  /** 不呼叫 LLM 也產得出來的判定，讓使用者按下按鈕前就知道會納入什麼。 */
+  const preview = useMemo(() => (patientFacts ? resolvePlan(null, patientFacts) : null), [patientFacts]);
 
-  const generationInput = useMemo<ComposedInput>(() => {
-    if (arm === "C") {
-      // 輔助判讀器要看到程式已經決定的事，才不會重複判定或提出無效的優先項。
-      const factsText = patientFacts
-        ? `${factsForSelectorPrompt(patientFacts)}\n\n${decisionsForPrompt(resolvePlan(null, patientFacts))}`
-        : "";
-      // 一次按下會並行送出三個請求，估算要是三者的總和。
-      return buildArmCInput({
-        selectorPrompt: MODULE_SELECTOR_PROMPT,
-        factsText,
-        labReviewPrompt: LAB_REVIEW_PROMPT,
-        labText: labSectionOf(llmText),
-        narrativePrompt: LAB_NARRATIVE_PROMPT,
-        narrativeText: patientFacts ? buildNarrativeInput(llmText, patientFacts) : "",
-      });
-    }
-    return buildGenerationInput({
-      systemPrompt: generatorPrompt,
-      patientText: llmText,
-      includeGuideline,
-      guidelineText,
-    });
-  }, [arm, patientFacts, generatorPrompt, llmText, includeGuideline, guidelineText]);
-
-  const evalInput = useMemo<ComposedInput>(
+  const selectorInput = useMemo(
     () =>
-      buildEvalInput({
-        systemPrompt: evalPrompt,
-        patientText: llmText,
-        report,
-        includeGuideline,
-        guidelineText,
+      patientFacts
+        ? `${factsForSelectorPrompt(patientFacts)}\n\n${decisionsForPrompt(resolvePlan(null, patientFacts))}`
+        : "",
+    [patientFacts],
+  );
+  const labInput = useMemo(() => labSectionOf(llmText), [llmText]);
+  const narrativeInput = useMemo(
+    () => (patientFacts ? buildNarrativeInput(llmText, patientFacts) : ""),
+    [llmText, patientFacts],
+  );
+
+  const composed = useMemo<ComposedInput>(
+    () =>
+      buildRunInput({
+        selectorPrompt: MODULE_SELECTOR_PROMPT,
+        factsText: selectorInput,
+        labReviewPrompt: LAB_REVIEW_PROMPT,
+        labText: labInput,
+        narrativePrompt: LAB_NARRATIVE_PROMPT,
+        narrativeText: narrativeInput,
       }),
-    [evalPrompt, llmText, report, includeGuideline, guidelineText],
+    [selectorInput, labInput, narrativeInput],
   );
 
-  const baseState: Omit<WorkbenchState, "totalTokens"> = {
-    arm,
-    llmText,
-    rawInput,
-    generatorPrompt,
-    evalPrompt,
-    report,
-    model,
-    apiKey,
-    requiresClientKey: onGitHubPages,
-    guidelineText,
-    tokenLimit: DEFAULT_INPUT_TOKEN_LIMIT,
-  };
-
-  const genBlockers = useMemo(() => {
-    const list = generateBlockers({ ...baseState, totalTokens: generationInput.totalTokens });
-    if (arm === "C" && !parsedRawJson) {
-      list.push({
-        code: "arm-c-needs-json",
-        message: "C（模組選擇流程）需要原始 JSON 病人資料才能做確定性事實抽取。",
-        howToFix: "請在步驟 01 上傳或貼上原始 JSON。純文字輸入無法使用 C。",
-        hard: true,
-      });
-    }
-    return list;
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [arm, llmText, rawInput, generatorPrompt, model, apiKey, onGitHubPages, guidelineText, generationInput.totalTokens, parsedRawJson]);
-
-  const evBlockers = useMemo(
-    () => evalBlockers({ ...baseState, totalTokens: evalInput.totalTokens }),
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-    [arm, llmText, evalPrompt, report, model, apiKey, onGitHubPages, guidelineText, evalInput.totalTokens],
+  const blockers = useMemo(
+    () =>
+      runBlockers({
+        rawInput,
+        parsedJson: Boolean(parsedRawJson),
+        model,
+        apiKey,
+        requiresClientKey: onGitHubPages,
+        totalTokens: composed.totalTokens,
+        tokenLimit: DEFAULT_INPUT_TOKEN_LIMIT,
+      }),
+    [rawInput, parsedRawJson, model, apiKey, onGitHubPages, composed.totalTokens],
   );
-
-  const guidelineCount = useMemo(() => {
-    if (guidelineMeasuredTokens !== null) {
-      return { tokens: guidelineMeasuredTokens, method: "measured" as const };
-    }
-    return guidelineTokens(guidelineText);
-  }, [guidelineText, guidelineMeasuredTokens]);
 
   useEffect(() => {
     if (runStartedAt === null) return;
     const timer = window.setInterval(() => {
       setElapsedSeconds(Math.floor((Date.now() - runStartedAt) / 1000));
-    }, 250);
+    }, 1000);
     return () => window.clearInterval(timer);
   }, [runStartedAt]);
 
   useEffect(() => {
-    if (failure && bannerRef.current) {
-      bannerRef.current.scrollIntoView({ block: "nearest", behavior: "smooth" });
-    }
+    if (failure) errorRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
   }, [failure]);
 
-  function fail(title: string, advice: string) {
-    setFailure({ title, advice, raw: "", status: null, aborted: false, timedOut: false });
+  function resetOutputs() {
+    setPatientReport("");
+    setClinicianReport("");
+    setChecks([]);
+    setNotice("");
   }
 
-  function chooseGeneratorPreset(presetId: PromptPresetId) {
-    setGeneratorPresetId(presetId);
-    if (presetId === "custom") return;
-    const preset = GENERATOR_PROMPT_PRESETS.find((item) => item.id === presetId);
-    if (preset) setGeneratorPrompt(preset.prompt);
-  }
-
-  function chooseEvalPreset(presetId: PromptPresetId) {
-    setEvalPresetId(presetId);
-    if (presetId === "custom") return;
-    const preset = EVAL_PROMPT_PRESETS.find((item) => item.id === presetId);
-    if (preset) setEvalPrompt(preset.prompt);
-  }
-
-  function restoreGeneratorPrompt() {
-    chooseGeneratorPreset(generatorPresetId === "custom" ? "workbench" : generatorPresetId);
-  }
-
-  function restoreEvalPrompt() {
-    chooseEvalPreset(evalPresetId === "custom" ? "workbench" : evalPresetId);
-  }
-
-  async function readGuidelineFile(file: File) {
-    setFailure(null);
+  function readFile(file: File) {
     if (file.size > MAX_FILE_BYTES) {
-      fail("指引 TXT 超過 5 MB", "請確認是否選到正確的檔案；本工具不會自動截斷指引。");
+      setFailure(describeGeminiFailure({ apiMessage: `檔案 ${file.name} 超過 5 MB 上限。` }));
       return;
     }
-    if (!file.name.toLowerCase().endsWith(".txt")) {
-      fail("指引目前只支援 TXT", "請先把 PDF 轉成純文字 TXT 再載入。");
-      return;
-    }
-    const text = await file.text();
-    if (!text.trim()) {
-      fail("指引 TXT 沒有可用文字", "檔案讀起來是空的，請確認轉檔結果。");
-      return;
-    }
-    setGuidelineText(text);
-    setGuidelineFileName(file.name);
-    setGuidelineMeasuredTokens(null);
-    const chars = charCount(text);
-    setNotice(
-      chars === GUIDELINE_KNOWN_CHARS
-        ? `已載入指引：${formatNumber(chars)} 字元，與已知全文完全相同，token 數採用官方實測值 ${formatNumber(GUIDELINE_KNOWN_TOKENS)}。`
-        : `已載入指引：${formatNumber(chars)} 字元。與已知全文（${formatNumber(GUIDELINE_KNOWN_CHARS)} 字元）不同，token 數為估算值。`,
-    );
+    const reader = new FileReader();
+    reader.onload = () => {
+      setRawInput(String(reader.result ?? ""));
+      setFileName(file.name);
+      resetOutputs();
+      setFailure(null);
+    };
+    reader.readAsText(file, "utf-8");
   }
 
-  function onGuidelineFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file) void readGuidelineFile(file);
-    event.target.value = "";
-  }
-
-  async function readFile(file: File) {
-    setFailure(null);
-    if (file.size > MAX_FILE_BYTES) {
-      fail("檔案超過 5 MB", "請先縮小檔案再上傳。");
-      return;
-    }
-    const lower = file.name.toLowerCase();
-    if (!lower.endsWith(".json") && !lower.endsWith(".txt")) {
-      fail("目前只支援 JSON 與 TXT", "請改用 .json 或 .txt 檔案。");
-      return;
-    }
-    const text = await file.text();
-
-    // 把指引 TXT 拖進病人資料區是常見誤操作，會覆蓋病人資料並清空整理結果。
-    if (charCount(text) > GUIDELINE_LIKE_CHARS && text.includes("糖尿病臨床照護指引")) {
-      fail(
-        "這個檔案看起來是指引全文，不是病人資料",
-        "已經略過，沒有覆蓋你目前的病人資料。指引請用下方「載入指引 TXT」按鈕載入。",
-      );
-      return;
-    }
-
-    setRawInput(text);
-    setFileName(file.name);
-    setLlmText("");
-    setReport("");
-    setClinicianTrace("");
-    setEvaluation("");
-    setInputTab("raw");
-    setNotice("已載入新的病人資料，請重新按「整理為 LLM 好讀文字」。");
-  }
-
-  function onFileChange(event: ChangeEvent<HTMLInputElement>) {
-    const file = event.target.files?.[0];
-    if (file) void readFile(file);
-    event.target.value = "";
-  }
-
-  function onDrop(event: DragEvent<HTMLDivElement>) {
-    event.preventDefault();
-    setDragging(false);
-    const file = event.dataTransfer.files?.[0];
-    if (file) void readFile(file);
-  }
-
-  function formatInput() {
+  async function run() {
     setFailure(null);
     setNotice("");
-    if (!rawInput.trim()) {
-      fail("還沒有病人資料", "請先上傳檔案、貼上文字，或按「載入去識別示範」。");
-      return;
-    }
-    setStage("formatting");
-    try {
-      const trimmed = rawInput.trim();
-      if (trimmed.startsWith("{") || trimmed.startsWith("[")) {
-        setLlmText(formatPatientJson(JSON.parse(trimmed) as unknown));
-      } else {
-        setLlmText(trimmed);
-      }
-      setInputTab("formatted");
-      setReport("");
-      setClinicianTrace("");
-      setEvaluation("");
-    } catch {
-      fail(
-        "這段內容看起來像 JSON，但格式無法解析",
-        "請檢查括號、逗號或引號是否成對；也可以改用 TXT 純文字輸入。",
-      );
-    } finally {
-      setStage("idle");
-    }
-  }
+    setChecks([]);
+    if (hasHardBlocker(blockers) || !patientFacts) return;
 
-  async function runGemini(systemPrompt: string, input: string, signal: AbortSignal) {
-    // 開發時可用 ?simulate=html|400|429|404|slow|empty 重現各種失敗，不需要真的金鑰。
-    const simulate =
-      import.meta.env.DEV && typeof window !== "undefined"
-        ? new URLSearchParams(window.location.search).get("simulate") ?? undefined
-        : undefined;
-
-    return callGemini({
-      apiKey,
-      model,
-      systemPrompt,
-      input,
-      signal,
-      direct: onGitHubPages,
-      timeoutMs: timeoutMinutes * 60 * 1000,
-      simulate,
-    });
-  }
-
-  async function generateReport(): Promise<string> {
-    setFailure(null);
-    setNotice("");
-    if (hasHardBlocker(genBlockers)) {
-      const first = genBlockers.find((item) => item.hard);
-      if (first) fail(first.message, first.howToFix);
-      return "";
-    }
-
-    setStage("generating");
+    setStage("running");
     setRunStartedAt(Date.now());
     setElapsedSeconds(0);
     const controller = new AbortController();
     abortControllerRef.current = controller;
 
-    try {
-      if (arm === "C") {
-        if (!patientFacts) throw new Error("缺少可用的 JSON 病人資料。");
-        const options = {
-          // 報告是現在產出的；來源的 REPORT_DATE 只代表資料到哪一天。
-          reportDate: new Date().toISOString().slice(0, 10),
-          dataCutoff: patientFacts.dataCutoff.known ? patientFacts.dataCutoff.value : null,
-        };
-        // 三次呼叫互相獨立，並行跑。任何一次失敗都不擋住其餘——
-        // 缺了檢驗敘述就退回程式組出的固定句型，缺了判讀就少一節，
-        // 但主題判定與指引目標完全不依賴 LLM，報告一定產得出來。
-        const labInput = labSectionOf(llmText);
-        const settled = await Promise.allSettled([
-          runGemini(MODULE_SELECTOR_PROMPT, generationInput.text, controller.signal),
-          runGemini(LAB_REVIEW_PROMPT, labInput, controller.signal),
-          runGemini(LAB_NARRATIVE_PROMPT, buildNarrativeInput(llmText, patientFacts), controller.signal),
-        ]);
-        const textOf = (index: number) =>
-          settled[index].status === "fulfilled"
-            ? (settled[index] as PromiseFulfilledResult<{ text: string }>).value.text
-            : null;
-
-        const attempt = <T,>(raw: string | null, parse: (value: string) => T): T | null => {
-          if (!raw) return null;
-          try {
-            return parse(raw);
-          } catch {
-            return null;
-          }
-        };
-        const selection = attempt(textOf(0), parseModuleSelection);
-        const labReview = attempt(textOf(1), (raw) => parseLabReview(raw, patientFacts));
-        const labNarrative = attempt(textOf(2), (raw) => parseLabNarrative(raw, patientFacts));
-
-        const plan = resolvePlan(selection, patientFacts);
-        const assembled = assemblePatientReport(plan, { ...options, labNarrative: labNarrative ?? undefined });
-        setReport(assembled);
-        setClinicianTrace(
-          assembleClinicianReport(plan, patientFacts, { ...options, labReview: labReview ?? undefined }),
-        );
-        setEvaluation("");
-
-        const full = plan.decisions.filter((item) => item.kind !== "excluded" && item.kind !== "prevention-moderate").length;
-        const failed = [
-          selection ? null : "模組挑選",
-          labReview ? null : "檢驗判讀",
-          labNarrative ? null : "檢驗敘述",
-        ].filter(Boolean);
-        const flags = [
-          labNarrative?.foundAfterAll.length
-            ? `⚠ 敘述器在紀錄中找到程式判定為缺檢的 ${labNarrative.foundAfterAll.length} 項，項目名稱比對有漏`
-            : null,
-          labNarrative?.unverifiedValues.length
-            ? `⚠ 敘述引用了 ${labNarrative.unverifiedValues.length} 個來源中找不到的數值`
-            : null,
-          labReview?.unverifiedValues.length
-            ? `⚠ 判讀引用了 ${labReview.unverifiedValues.length} 個來源中找不到的數值`
-            : null,
-        ].filter(Boolean);
-        setNotice(
-          [
-            `完成：程式依 R／PR 納入 ${full} 個併發症主題、${plan.moderateTopics.length} 個簡短提醒、${plan.selfCareModuleIds.length} 個自我照護模組。`,
-            failed.length ? `${failed.join("、")}未取得，該部分已退回程式輸出。` : "三次 LLM 呼叫全部成功。",
-            ...flags,
-          ].join(" "),
-        );
-        return assembled;
-      }
-
-      const result = await runGemini(generatorPrompt, generationInput.text, controller.signal);
-      setReport(result.text);
-      setClinicianTrace("");
-      setEvaluation("");
-      return result.text;
-    } catch (cause) {
-      if (cause instanceof GeminiRequestError) {
-        if (!cause.failure.aborted) setFailure(cause.failure);
-      } else {
-        setFailure(describeGeminiFailure({ cause }));
-      }
-      return "";
-    } finally {
-      if (abortControllerRef.current === controller) abortControllerRef.current = null;
-      setRunStartedAt(null);
-      setStage("idle");
-    }
-  }
-
-  async function evaluateReport(reportOverride?: string) {
-    setFailure(null);
-    const reportToEvaluate = reportOverride || report;
-    const blockers = evalBlockers({
-      ...baseState,
-      report: reportToEvaluate,
-      totalTokens: evalInput.totalTokens,
-    });
-    if (hasHardBlocker(blockers)) {
-      const first = blockers.find((item) => item.hard);
-      if (first) fail(first.message, first.howToFix);
-      return;
-    }
-
-    setStage("evaluating");
-    setRunStartedAt(Date.now());
-    setElapsedSeconds(0);
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-
-    try {
-      const composed = buildEvalInput({
-        systemPrompt: evalPrompt,
-        patientText: llmText,
-        report: reportToEvaluate,
-        includeGuideline,
-        guidelineText,
-      });
-      const result = await runGemini(evalPrompt, composed.text, controller.signal);
-      setEvaluation(result.text);
-    } catch (cause) {
-      if (cause instanceof GeminiRequestError) {
-        if (!cause.failure.aborted) setFailure(cause.failure);
-      } else {
-        setFailure(describeGeminiFailure({ cause }));
-      }
-    } finally {
-      if (abortControllerRef.current === controller) abortControllerRef.current = null;
-      setRunStartedAt(null);
-      setStage("idle");
-    }
-  }
-
-  function stopCurrentRequest() {
-    abortControllerRef.current?.abort();
-  }
-
-  async function generateAndEvaluate() {
-    const generated = await generateReport();
-    if (generated) await evaluateReport(generated);
-  }
-
-  async function measureGuidelineTokens() {
-    setFailure(null);
-    if (!guidelineText.trim()) {
-      fail("還沒載入指引", "請先按「載入指引 TXT」。");
-      return;
-    }
-    if (onGitHubPages && !apiKey.trim()) {
-      fail("精算需要 Gemini 金鑰", "請先在上方輸入金鑰；countTokens 不會產生生成費用。");
-      return;
-    }
-    setStage("counting");
-    const controller = new AbortController();
-    abortControllerRef.current = controller;
-    try {
-      const total = await countTokens({
+    const call = (systemPrompt: string, input: string) =>
+      callGemini({
         apiKey,
         model,
-        text: guidelineText,
-        direct: onGitHubPages,
+        systemPrompt,
+        input,
         signal: controller.signal,
+        direct: onGitHubPages,
+        timeoutMs: timeoutMinutes * 60 * 1000,
       });
-      setGuidelineMeasuredTokens(total);
-      setNotice(`countTokens 實測：指引全文為 ${formatNumber(total)} tokens。`);
+
+    try {
+      // 三次呼叫互相獨立，並行送出。任何一次失敗都不擋住其餘——主題判定與
+      // 指引目標完全不依賴 LLM，報告一定產得出來，缺的部分退回程式輸出。
+      const settled = await Promise.allSettled([
+        call(MODULE_SELECTOR_PROMPT, selectorInput),
+        call(LAB_REVIEW_PROMPT, labInput),
+        call(LAB_NARRATIVE_PROMPT, narrativeInput),
+      ]);
+      const textOf = (index: number) =>
+        settled[index].status === "fulfilled"
+          ? (settled[index] as PromiseFulfilledResult<{ text: string }>).value.text
+          : null;
+      const attempt = <T,>(raw: string | null, parse: (value: string) => T): T | null => {
+        if (!raw) return null;
+        try {
+          return parse(raw);
+        } catch {
+          return null;
+        }
+      };
+
+      const selection = attempt(textOf(0), parseModuleSelection);
+      const labReview = attempt(textOf(1), (raw) => parseLabReview(raw, patientFacts));
+      const labNarrative = attempt(textOf(2), (raw) => parseLabNarrative(raw, patientFacts));
+
+      const options = {
+        reportDate: new Date().toISOString().slice(0, 10),
+        dataCutoff: patientFacts.dataCutoff.known ? patientFacts.dataCutoff.value : null,
+      };
+      const plan = resolvePlan(selection, patientFacts);
+      setPatientReport(assemblePatientReport(plan, { ...options, labNarrative: labNarrative ?? undefined }));
+      setClinicianReport(
+        assembleClinicianReport(plan, patientFacts, { ...options, labReview: labReview ?? undefined }),
+      );
+      setOutputTab("patient");
+
+      const found: string[] = [];
+      const failed = [
+        selection ? null : "① 模組挑選",
+        labReview ? null : "② 檢驗判讀",
+        labNarrative ? null : "③ 檢驗敘述",
+      ].filter(Boolean) as string[];
+      if (labNarrative?.foundAfterAll.length) {
+        found.push(
+          `敘述器在紀錄中找到程式判定為缺檢的 ${labNarrative.foundAfterAll.length} 項（${labNarrative.foundAfterAll
+            .map((item) => `${item.item} → ${item.as}`)
+            .join("、")}）：項目名稱比對有漏，需修正程式。`,
+        );
+      }
+      if (labNarrative?.unverifiedValues.length) {
+        found.push(`病人版敘述引用了 ${labNarrative.unverifiedValues.length} 個來源中找不到的數值，已在報告中就地標示。`);
+      }
+      if (labNarrative?.bannedPhrases.length) {
+        found.push(`病人版敘述可能踩到禁止事項：${labNarrative.bannedPhrases.join("、")}。`);
+      }
+      if (labReview?.unverifiedValues.length) {
+        found.push(`醫師版判讀引用了 ${labReview.unverifiedValues.length} 個來源中找不到的數值，已在報告中就地標示。`);
+      }
+      if (failed.length) found.push(`${failed.join("、")}未取得，該部分已退回程式輸出。`);
+      setChecks(found);
+
+      const full = plan.decisions.filter(
+        (item) => item.kind !== "excluded" && item.kind !== "prevention-moderate",
+      ).length;
+      setNotice(
+        `完成：程式依 R／PR 納入 ${full} 個併發症主題、${plan.moderateTopics.length} 個簡短提醒、${plan.selfCareModuleIds.length} 個自我照護模組${
+          found.length ? "" : "；自動檢查全數通過"
+        }。`,
+      );
     } catch (cause) {
       if (cause instanceof GeminiRequestError) {
         if (!cause.failure.aborted) setFailure(cause.failure);
@@ -649,519 +427,391 @@ export default function Home() {
     }
   }
 
-  async function copy(value: string, label: string) {
-    await navigator.clipboard.writeText(value);
-    setCopied(label);
-    window.setTimeout(() => setCopied(""), 1600);
+  async function copy(text: string, key: string) {
+    await navigator.clipboard.writeText(text);
+    setCopied(key);
+    window.setTimeout(() => setCopied(""), 1500);
   }
 
-  function resetAll() {
-    setRawInput("");
-    setLlmText("");
-    setFileName("");
-    setReport("");
-    setClinicianTrace("");
-    setEvaluation("");
-    setFailure(null);
-    setNotice("");
-    setInputTab("raw");
-  }
-
-  const generateDisabled = busy || hasHardBlocker(genBlockers);
-  const evaluateDisabled = busy || hasHardBlocker(evBlockers);
+  const activePrompt = PROMPTS.find((item) => item.id === promptId) ?? PROMPTS[0];
+  const output = outputTab === "patient" ? patientReport : clinicianReport;
 
   return (
-    <main>
+    <main className="workspace">
       <header className="topbar">
-        <a className="brand" href="#top" aria-label="糖衛工作台首頁">
+        <div className="brand">
           <span className="brandMark">糖衛</span>
-          <span>報告工作台</span>
-        </a>
+          <span>報告產生器</span>
+        </div>
         <div className="topMeta">
-          <span className="privacyPill"><span className="statusDot" />不寫入本站資料庫</span>
-          <span className="modelPill">金鑰僅暫存本頁</span>
+          <span className="privacyPill">
+            <span className="statusDot" />
+            不寫入本站資料庫
+          </span>
+          <span className="privacyPill">金鑰僅暫存本頁</span>
         </div>
       </header>
 
-      <section className="hero" id="top">
-        <div className="heroCopy">
-          <p className="eyebrow">DIABETES EDUCATION REPORT LAB</p>
-          <h1>從病人資料，到可讀的衛教報告與品質稽核。</h1>
-          <p className="heroLead">
-            上傳 JSON、TXT 或直接貼上文字；先確認 LLM 好讀版本，再用可編輯的 prompt 生成報告並獨立稽核。
-          </p>
-        </div>
-        <div className="flowMap" aria-label="處理流程">
-          <div><span>01</span><strong>整理資料</strong><small>保留來源與限制</small></div>
-          <i>→</i>
-          <div><span>02</span><strong>生成報告</strong><small>自訂 system prompt</small></div>
-          <i>→</i>
-          <div><span>03</span><strong>品質稽核</strong><small>看見風險與修改建議</small></div>
-        </div>
+      <section className="hero">
+        <p className="eyebrow">DIABETES EDUCATION REPORT</p>
+        <h1>
+          一份健保申報 JSON，
+          <br />
+          兩份可用的報告。
+        </h1>
+        <p className="heroLead">
+          併發症主題、個別化目標與追蹤間隔完全由程式依 R／PR 與指引門檻表判定；LLM 只負責規則做不到的三件事。
+          病人可見的衛教正文來自固定模組，不由模型改寫。
+        </p>
+        <FlowDiagram />
       </section>
 
-      {failure && (
-        <div className="errorBanner" role="alert" ref={bannerRef}>
-          <strong>目前無法繼續</strong>
-          <span>
-            <b>{failure.title}</b>
-            <i>{failure.advice}</i>
-            {failure.raw && <code>原始錯誤：{failure.raw}</code>}
-          </span>
-          <button onClick={() => setFailure(null)} aria-label="關閉錯誤訊息">×</button>
-        </div>
-      )}
-
-      {notice && !failure && (
-        <div className="noticeBanner" role="status">
-          <span>{notice}</span>
-          <button onClick={() => setNotice("")} aria-label="關閉提示">×</button>
-        </div>
-      )}
-
-      <section className="workspace">
-        <article className="stepCard inputCard">
-          <div className="stepHeading">
-            <div className="stepNumber">01</div>
-            <div>
-              <p>INPUT</p>
-              <h2>病人資料整理</h2>
-              <span>JSON 會在瀏覽器內轉成文字；TXT 與貼上的純文字會保留原文。</span>
-            </div>
+      <article className="stepCard">
+        <div className="stepHeading">
+          <span className="stepNumber">01</span>
+          <div>
+            <p className="eyebrow">INPUT</p>
+            <h2>病人資料</h2>
+            <p className="fieldNote">
+              需要原始 JSON。這條流程要讀 R／PR／CKD 與檢驗紀錄的結構化欄位，純文字無法判定主題與門檻。
+            </p>
           </div>
+        </div>
 
-          <div className="inputGrid">
-            <div
-              className={`dropZone ${dragging ? "dragging" : ""}`}
-              onDragOver={(event) => { event.preventDefault(); setDragging(true); }}
-              onDragLeave={() => setDragging(false)}
-              onDrop={onDrop}
-            >
+        <div className="inputGrid">
+          <div
+            className={dragging ? "dropZone dragging" : "dropZone"}
+            onDragOver={(event: DragEvent<HTMLDivElement>) => {
+              event.preventDefault();
+              setDragging(true);
+            }}
+            onDragLeave={() => setDragging(false)}
+            onDrop={(event: DragEvent<HTMLDivElement>) => {
+              event.preventDefault();
+              setDragging(false);
+              const file = event.dataTransfer.files?.[0];
+              if (file) readFile(file);
+            }}
+          >
+            <span className="fileGlyph">JSON</span>
+            <p>拖曳檔案到這裡</p>
+            <p className="fieldNote">上限 5 MB，只在瀏覽器內處理</p>
+            <label className="secondaryButton">
+              選擇檔案
               <input
-                ref={fileInputRef}
                 type="file"
-                accept=".json,.txt,application/json,text/plain"
-                onChange={onFileChange}
+                accept=".json,application/json"
                 hidden
+                onChange={(event: ChangeEvent<HTMLInputElement>) => {
+                  const file = event.target.files?.[0];
+                  if (file) readFile(file);
+                  event.target.value = "";
+                }}
               />
-              <div className="fileGlyph">JSON<br />TXT</div>
-              <div>
-                <strong>{fileName || "拖曳檔案到這裡"}</strong>
-                <p>{fileName ? `${charLabel(rawInput)}，可重新上傳替換` : "支援 .json、.txt，單檔上限 5 MB"}</p>
-              </div>
-              <button className="secondaryButton" onClick={() => fileInputRef.current?.click()}>
-                選擇檔案
-              </button>
-            </div>
-
-            <div className="editorShell inputEditor">
-              <div className="editorToolbar">
-                <div className="tabs" role="tablist" aria-label="病人資料版本">
-                  <button className={inputTab === "raw" ? "active" : ""} onClick={() => setInputTab("raw")}>原始輸入</button>
-                  <button className={inputTab === "formatted" ? "active" : ""} onClick={() => setInputTab("formatted")}>LLM 好讀文字</button>
-                </div>
-                <span>{charLabel(inputTab === "raw" ? rawInput : llmText)}</span>
-              </div>
-              <textarea
-                aria-label={inputTab === "raw" ? "原始病人資料" : "LLM好讀病人資料"}
-                value={inputTab === "raw" ? rawInput : llmText}
-                onChange={(event) => inputTab === "raw" ? setRawInput(event.target.value) : setLlmText(event.target.value)}
-                placeholder={inputTab === "raw" ? "在此貼上 JSON 或純文字病人資料…" : "整理後的文字會顯示在這裡，您仍可手動修改。"}
-                spellCheck={false}
-              />
-            </div>
+            </label>
+            {fileName ? <p className="fieldNote">{fileName}</p> : null}
           </div>
 
-          <div className="cardActions splitActions">
+          <div className="editorShell">
+            <div className="editorToolbar">
+              <div className="tabs">
+                <button type="button" className={inputTab === "raw" ? "active" : ""} onClick={() => setInputTab("raw")}>
+                  原始 JSON
+                </button>
+                <button
+                  type="button"
+                  className={inputTab === "formatted" ? "active" : ""}
+                  onClick={() => setInputTab("formatted")}
+                  disabled={!llmText}
+                >
+                  LLM 好讀文字
+                </button>
+              </div>
+              <span className="fieldNote">
+                {formatNumber(charCount(inputTab === "raw" ? rawInput : llmText))} 字
+              </span>
+            </div>
+            <textarea
+              className="inputEditor"
+              value={inputTab === "raw" ? rawInput : llmText}
+              readOnly={inputTab === "formatted"}
+              onChange={(event) => {
+                setRawInput(event.target.value);
+                resetOutputs();
+              }}
+              placeholder="在此貼上健保申報 JSON…"
+              spellCheck={false}
+            />
             <div className="inlineActions">
-              <button className="primaryButton" onClick={formatInput} disabled={busy}>
-                整理為 LLM 好讀文字
-              </button>
               <button
+                type="button"
                 className="textButton"
                 onClick={() => {
                   setRawInput(SAMPLE_INPUT);
-                  setFileName("示範資料.json");
-                  setInputTab("raw");
-                  setLlmText("");
-                  setNotice("已載入示範資料，請按「整理為 LLM 好讀文字」。");
+                  setFileName("");
+                  resetOutputs();
                 }}
-                disabled={busy}
               >
-                載入去識別示範
+                載入合成示範資料
               </button>
-            </div>
-            <div className="inlineActions">
-              {llmText && <button className="textButton" onClick={() => void copy(llmText, "資料")}>{copied === "資料" ? "已複製" : "複製整理文字"}</button>}
-              {llmText && <button className="textButton" onClick={() => downloadText("病人資料_整理版_for_llm.txt", llmText)}>下載 TXT</button>}
-              {(rawInput || llmText) && <button className="dangerTextButton" onClick={resetAll}>清除本頁資料</button>}
+              <span className="fieldNote">示範資料為虛構，非真實病人</span>
             </div>
           </div>
-        </article>
+        </div>
 
-        <article className="stepCard generatorCard">
-          <div className="stepHeading">
-            <div className="stepNumber">02</div>
-            <div>
-              <p>GENERATE</p>
-              <h2>生成糖尿病衛教報告</h2>
-              <span>prompt 與模型都可修改；API 金鑰僅在執行時使用，不會寫入本站。</span>
+        {preview ? (
+          <>
+            <div className="guidelineFacts">
+              <div>
+                <dt>已發生的併發症主題</dt>
+                <dd>{preview.decisions.filter((item) => item.kind === "established").length} 項</dd>
+              </div>
+              <div>
+                <dt>預防重點</dt>
+                <dd>{preview.decisions.filter((item) => item.kind === "prevention-active").length} 項</dd>
+              </div>
+              <div>
+                <dt>簡短提醒</dt>
+                <dd>{preview.moderateTopics.length} 項</dd>
+              </div>
+              <div>
+                <dt>需核實的檢驗結果</dt>
+                <dd>{preview.labThresholds.length} 則</dd>
+              </div>
+              <div>
+                <dt>自我照護模組</dt>
+                <dd>{preview.selfCareModuleIds.length} 個</dd>
+              </div>
+              <div>
+                <dt>依指引推導的目標</dt>
+                <dd>{preview.targets.targets.filter((item) => item.value).length} 項</dd>
+              </div>
             </div>
+            <p className="fieldNote">以上完全由程式判定，不需要 API 金鑰，也不會因為換模型而改變。</p>
+          </>
+        ) : null}
+      </article>
+
+      <article className="stepCard generatorCard">
+        <div className="stepHeading">
+          <span className="stepNumber">02</span>
+          <div>
+            <p className="eyebrow">RUN</p>
+            <h2>產出兩份報告</h2>
+            <p className="fieldNote">按一次並行送出三個請求。金鑰只在執行時使用，不寫入本站。</p>
           </div>
+        </div>
 
-          <div className="guidelinePanel">
-            <div className="guidelinePanelCopy">
-              <span className="guidelineEyebrow">GUIDELINE A/B/C TEST</span>
-              <strong>流程比較</strong>
-              <p>{armDef.description}</p>
+        <div className="settingsPane">
+          <div className="credentialBox">
+            <div className="credentialLabelRow">
+              <label className="fieldLabel" htmlFor={GEMINI_CREDENTIAL_INPUT_ID}>
+                Gemini 臨時存取金鑰
+              </label>
+              <span className="fieldNote">重新整理即清除</span>
             </div>
-            <div className="guidelineControls">
-              <input ref={guidelineInputRef} type="file" accept=".txt,text/plain" onChange={onGuidelineFileChange} hidden />
-              <select
-                className="textInput guidelineSelect"
-                aria-label="選擇生成流程"
-                value={arm}
-                onChange={(event) => setArm(event.target.value as ArmId)}
-                disabled={busy}
-              >
-                {ARMS.map((item) => (
-                  <option key={item.id} value={item.id}>{item.label}</option>
-                ))}
-              </select>
-              <button className="secondaryButton" onClick={() => guidelineInputRef.current?.click()} disabled={busy}>
-                {guidelineText ? "更換指引 TXT" : "載入指引 TXT"}
+            <div className="passwordRow">
+              <input
+                id={GEMINI_CREDENTIAL_INPUT_ID}
+                className="apiKeyInput"
+                type={showApiKey ? "text" : "password"}
+                value={apiKey}
+                onChange={(event) => setApiKey(event.target.value)}
+                autoComplete="off"
+                spellCheck={false}
+                placeholder="貼上金鑰"
+              />
+              <button type="button" className="showKeyButton" onClick={() => setShowApiKey((value) => !value)}>
+                {showApiKey ? "隱藏" : "顯示"}
               </button>
-              {guidelineText && (
-                <>
-                  <button className="secondaryButton" onClick={() => void measureGuidelineTokens()} disabled={busy}>
-                    {stage === "counting" ? "精算中…" : "用 countTokens 精算"}
-                  </button>
-                  <button
-                    className="dangerTextButton"
-                    onClick={() => {
-                      setGuidelineText("");
-                      setGuidelineFileName("");
-                      setGuidelineMeasuredTokens(null);
-                      if (arm === "B") setArm("A");
-                    }}
-                    disabled={busy}
-                  >
-                    移除指引
-                  </button>
-                </>
-              )}
             </div>
-
-            <dl className="guidelineFacts">
-              <div>
-                <dt>指引是否已載入</dt>
-                <dd className={guidelineText ? "ok" : "missing"}>
-                  {guidelineText ? `已載入：${guidelineFileName}` : "尚未載入"}
-                </dd>
-              </div>
-              <div>
-                <dt>指引字元數</dt>
-                <dd>{guidelineText ? `${formatNumber(charCount(guidelineText))} 字元` : "—"}</dd>
-              </div>
-              <div>
-                <dt>指引 token 數</dt>
-                <dd>
-                  {guidelineText
-                    ? `${formatNumber(guidelineCount.tokens)} tokens（${guidelineCount.method === "measured" ? "實測" : "估算"}）`
-                    : "—"}
-                </dd>
-              </div>
-              <div>
-                <dt>本次生成會帶入指引</dt>
-                <dd className={generationInput.guidelineIncluded ? "ok" : "missing"}>
-                  {generationInput.guidelineIncluded ? "會帶入" : "不會帶入"}
-                  {generationInput.guidelineRequestedButMissing && "（已選 B 但指引是空的）"}
-                </dd>
-              </div>
-              <div>
-                <dt>本次稽核會帶入指引</dt>
-                <dd className={evalInput.guidelineIncluded ? "ok" : "missing"}>
-                  {evalInput.guidelineIncluded ? "會帶入" : "不會帶入"}
-                </dd>
-              </div>
-            </dl>
-
-            <p className="guidelinePrivacy">
-              指引只保留在本頁；選擇 B 並執行時才會隨請求送出，不寫入本站資料庫。整份指引會明顯增加輸入量、等待時間與費用。
-              本工具在任何情況下都不會自動截斷指引或病人資料。
-              {arm === "C" && ` C 使用模組目錄 ${MODULE_CATALOG_VERSION}，尚未經醫療團隊核准，組出的報告只能用於流程比較。`}
+            <p className="fieldNote">
+              只暫存在本頁記憶體，不寫入資料庫或瀏覽器儲存空間。
+              {onGitHubPages ? "此版本由瀏覽器直接傳給 Google Gemini。" : "私人站版透過本站伺服器轉送。"}
+              請只在可信任的網址輸入金鑰。
             </p>
           </div>
 
-          <div className="twoColumns">
-            <div className="settingsPane">
-              <div className="credentialBox">
-                <div className="labelRow credentialLabelRow">
-                  <label className="fieldLabel" htmlFor={GEMINI_CREDENTIAL_INPUT_ID}>Gemini 臨時存取金鑰</label>
-                  <span>重新整理即清除</span>
-                </div>
-                <div className="passwordRow">
-                  <input
-                    id={GEMINI_CREDENTIAL_INPUT_ID}
-                    name="dmEducationGeminiTransientCredentialManualEntry"
-                    className="textInput apiKeyInput"
-                    type={showApiKey ? "text" : "password"}
-                    value={apiKey}
-                    onChange={(event) => setApiKey(event.target.value)}
-                    placeholder="請手動貼上本次使用的 Gemini 金鑰"
-                    autoComplete="new-password"
-                    autoCapitalize="off"
-                    autoCorrect="off"
-                    data-1p-ignore="true"
-                    data-lpignore="true"
-                    data-bwignore="true"
-                    data-form-type="other"
-                    spellCheck={false}
-                  />
-                  <button type="button" className="showKeyButton" onClick={() => setShowApiKey((current) => !current)}>
-                    {showApiKey ? "隱藏" : "顯示"}
-                  </button>
-                </div>
-                <p className="fieldNote">只暫存在本頁記憶體，不寫入資料庫或瀏覽器儲存空間。GitHub Pages 版會由瀏覽器直接傳給 Google Gemini；私人站版則透過本站伺服器。請只在可信任的網址輸入金鑰。</p>
-              </div>
-
-              <label className="fieldLabel modelLabel" htmlFor="model">Gemini 模型</label>
-              <select
-                id="model"
-                className="textInput selectInput"
-                value={modelChoice}
-                onChange={(event) => setModelChoice(event.target.value)}
-              >
-                {MODEL_OPTIONS.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
-              </select>
-              {modelChoice === CUSTOM_MODEL && (
-                <input
-                  className="textInput customModelInput"
-                  aria-label="自訂Gemini模型ID"
-                  value={customModel}
-                  onChange={(event) => setCustomModel(event.target.value)}
-                  placeholder="例如 gemini-flash-latest"
-                  spellCheck={false}
-                />
-              )}
-              <p className="fieldNote">生成與品質稽核目前使用同一個模型；選擇自訂時請輸入 Gemini API 支援的模型 ID。</p>
-
-              <label className="fieldLabel modelLabel" htmlFor="timeout">單次請求逾時上限（分鐘）</label>
+          <div>
+            <label className="fieldLabel" htmlFor="modelSelect">
+              Gemini 模型
+            </label>
+            <select
+              id="modelSelect"
+              className="selectInput"
+              value={modelChoice}
+              onChange={(event) => setModelChoice(event.target.value)}
+            >
+              {MODEL_OPTIONS.map((option) => (
+                <option key={option.value} value={option.value}>
+                  {option.label}
+                </option>
+              ))}
+            </select>
+            {modelChoice === CUSTOM_MODEL ? (
               <input
-                id="timeout"
-                className="textInput"
-                type="number"
-                min={1}
-                max={60}
-                value={timeoutMinutes}
-                onChange={(event) => setTimeoutMinutes(Math.max(1, Math.min(60, Number(event.target.value) || DEFAULT_TIMEOUT_MINUTES)))}
+                className="customModelInput"
+                value={customModel}
+                onChange={(event) => setCustomModel(event.target.value)}
+                placeholder="輸入 Gemini API 支援的模型 ID"
               />
-              <p className="fieldNote">帶入指引全文時單次可能需要數分鐘。逾時會明確顯示為逾時，與你按「停止」區分。</p>
-
-              <label className="fieldLabel promptPresetLabel" htmlFor="generatorPromptPreset">生成規則版本</label>
-              <select
-                id="generatorPromptPreset"
-                className="textInput selectInput"
-                value={generatorPresetId}
-                onChange={(event) => chooseGeneratorPreset(event.target.value as PromptPresetId)}
-                disabled={arm === "C"}
-              >
-                {GENERATOR_PROMPT_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
-                <option value="custom">自訂內容（目前文字）</option>
-              </select>
-              <p className="fieldNote">
-                {arm === "C"
-                  ? "C 使用固定的模組選擇器 prompt，不使用這裡的生成 prompt。"
-                  : generatorPresetId === "custom"
-                    ? "下方文字已手動修改，重新整理頁面後不會保留。"
-                    : GENERATOR_PROMPT_PRESETS.find((preset) => preset.id === generatorPresetId)?.description}
-              </p>
-
-              <div className="labelRow">
-                <label className="fieldLabel" htmlFor="generatorPrompt">
-                  {arm === "C" ? "三次呼叫使用的 system prompt（唯讀）" : "生成用 system prompt"}
-                </label>
-                {arm === "C" ? (
-                  <select
-                    className="textInput"
-                    value={armCPromptId}
-                    onChange={(event) => setArmCPromptId(event.target.value as typeof armCPromptId)}
-                  >
-                    <option value="selector">① 模組挑選（只回代碼與優先序）</option>
-                    <option value="labReview">② 檢驗判讀（進醫師版）</option>
-                    <option value="narrative">③ 檢驗敘述（進病人版）</option>
-                  </select>
-                ) : null}
-                <button className="miniButton" onClick={restoreGeneratorPrompt}>
-                  {generatorPresetId === "custom" ? "恢復工作台預設" : "重新載入此版本"}
-                </button>
-              </div>
-              <textarea
-                id="generatorPrompt"
-                className="promptEditor"
-                value={arm === "C" ? armCPrompt : generatorPrompt}
-                onChange={(event) => { setGeneratorPrompt(event.target.value); setGeneratorPresetId("custom"); }}
-                readOnly={arm === "C"}
-                spellCheck={false}
-              />
-              <p className="fieldNote">病人資料會自動接在 system prompt 後送出，不必複製到 prompt 內。</p>
-            </div>
-
-            <div className="outputPane">
-              <div className="outputHeader">
-                <div><span className="outputDot teal" /><strong>{arm === "C" ? "組合後的病人版報告" : "Gemini 報告"}</strong></div>
-                <span>{report ? charLabel(report) : "等待生成"}</span>
-              </div>
-              <textarea
-                aria-label="Gemini產生的糖尿病衛教報告"
-                className="outputEditor"
-                value={report}
-                onChange={(event) => { setReport(event.target.value); setEvaluation(""); }}
-                placeholder="產生的報告會顯示在這裡。您可以人工修改後，再送交 eval LLM 稽核。"
-                spellCheck={false}
-              />
-              <div className="outputActions">
-                <button onClick={() => void copy(report, "報告")} disabled={!report}>{copied === "報告" ? "已複製" : "複製"}</button>
-                <button onClick={() => downloadText("糖尿病衛教報告.txt", report)} disabled={!report}>下載 TXT</button>
-              </div>
-              {clinicianTrace && (
-                <details className="tracePanel" open>
-                  <summary>醫師版報告（含 DCSI、R1–R7、PR1–PR7 代碼與分數，病人版不顯示）</summary>
-                  <pre>{clinicianTrace}</pre>
-                  <div className="traceActions">
-                    <button onClick={() => void copy(clinicianTrace, "醫師版")}>
-                      {copied === "醫師版" ? "已複製" : "複製醫師版"}
-                    </button>
-                    <button onClick={() => downloadText("糖尿病衛教報告_醫師版.txt", clinicianTrace)}>
-                      下載醫師版 TXT
-                    </button>
-                  </div>
-                </details>
-              )}
-            </div>
+            ) : null}
           </div>
 
-          <div className="cardActionsColumn">
-            <CompositionPanel
-              input={generationInput}
-              title="本次生成會送出的輸入"
-              note={arm === "C" ? "C 只送出精簡事實摘要，不送原始申報明細，也不送指引。" : undefined}
+          <div>
+            <label className="fieldLabel" htmlFor="timeoutInput">
+              單次請求逾時上限（分鐘）
+            </label>
+            <input
+              id="timeoutInput"
+              className="textInput"
+              type="number"
+              min={1}
+              max={60}
+              value={timeoutMinutes}
+              onChange={(event) => setTimeoutMinutes(Number(event.target.value) || DEFAULT_TIMEOUT_MINUTES)}
             />
-            <BlockerList blockers={genBlockers} label="目前不能生成的原因" />
-            <div className="cardActions">
-              <button className="primaryButton" onClick={() => void generateReport()} disabled={generateDisabled}>
-                {stage === "generating" ? <><span className="spinner" />{arm === "C" ? "三次呼叫並行中" : "Gemini 生成中"}… {elapsedSeconds} 秒</> : arm === "C" ? "一鍵產出兩份報告" : "生成衛教報告"}
-              </button>
-              <button className="secondaryButton runAll" onClick={() => void generateAndEvaluate()} disabled={generateDisabled}>
-                生成並接續稽核
-              </button>
-              {stage === "generating" && (
-                <button className="stopButton" onClick={stopCurrentRequest}>停止生成</button>
-              )}
-            </div>
+            <p className="fieldNote">逾時會明確顯示為逾時，與你按「停止」區分。</p>
           </div>
-        </article>
+        </div>
 
-        <article className="stepCard evalCard">
-          <div className="stepHeading">
-            <div className="stepNumber">03</div>
-            <div>
-              <p>EVALUATE</p>
-              <h2>獨立品質稽核</h2>
-              <span>eval LLM 同時看到整理後病人資料與待評估報告。</span>
-            </div>
+        <CompositionPanel input={composed} />
+
+        {failure ? (
+          <div className="errorBanner" ref={errorRef} role="alert">
+            <strong>{failure.title}</strong>
+            <p>{failure.advice}</p>
+            {failure.raw ? <pre>{failure.raw}</pre> : null}
           </div>
+        ) : null}
+        {notice ? <div className="noticeBanner">{notice}</div> : null}
+        {checks.length ? (
+          <div className="blockerList" role="status">
+            <strong>自動檢查發現</strong>
+            <ul>
+              {checks.map((item) => (
+                <li key={item} className="soft">
+                  <span className="blockerMessage">{item}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ) : null}
 
-          <div className="twoColumns">
-            <div className="settingsPane">
-              <label className="fieldLabel" htmlFor="evalPromptPreset">稽核規則版本</label>
-              <select
-                id="evalPromptPreset"
-                className="textInput selectInput"
-                value={evalPresetId}
-                onChange={(event) => chooseEvalPreset(event.target.value as PromptPresetId)}
+        <BlockerList blockers={blockers} />
+
+        <div className="cardActions">
+          <button
+            type="button"
+            className="primaryButton"
+            onClick={run}
+            disabled={stage !== "idle" || hasHardBlocker(blockers)}
+          >
+            {stage === "running" ? (
+              <>
+                <span className="spinner" />
+                三次呼叫並行中… {elapsedSeconds} 秒
+              </>
+            ) : (
+              "產出兩份報告"
+            )}
+          </button>
+          {stage === "running" ? (
+            <button type="button" className="stopButton" onClick={() => abortControllerRef.current?.abort()}>
+              停止
+            </button>
+          ) : null}
+        </div>
+      </article>
+
+      <article className="stepCard">
+        <div className="stepHeading">
+          <span className="stepNumber">03</span>
+          <div>
+            <p className="eyebrow">OUTPUT</p>
+            <h2>兩份報告</h2>
+            <p className="fieldNote">兩份由同一份判定組出，主題、目標與門檻一致。</p>
+          </div>
+        </div>
+
+        <div className="outputPane">
+          <div className="outputHeader">
+            <div className="tabs">
+              <button
+                type="button"
+                className={outputTab === "patient" ? "active" : ""}
+                onClick={() => setOutputTab("patient")}
               >
-                {EVAL_PROMPT_PRESETS.map((preset) => <option key={preset.id} value={preset.id}>{preset.label}</option>)}
-                <option value="custom">自訂內容（目前文字）</option>
-              </select>
-              <p className="fieldNote">
-                {evalPresetId === "custom"
-                  ? "下方文字已手動修改，重新整理頁面後不會保留。"
-                  : EVAL_PROMPT_PRESETS.find((preset) => preset.id === evalPresetId)?.description}
-              </p>
-              {evalPresetId === "colleague" && !includeGuideline && (
-                <p className="promptWarning">
-                  這個版本假設稽核模型已取得臨床指引；目前流程選的是 {arm}，不會自動附上兩份 PDF，因此輸出的指引章節與引用仍需人工核對。
-                </p>
-              )}
-
-              <div className="labelRow">
-                <label className="fieldLabel" htmlFor="evalPrompt">eval LLM system prompt</label>
-                <button className="miniButton" onClick={restoreEvalPrompt}>
-                  {evalPresetId === "custom" ? "恢復工作台預設" : "重新載入此版本"}
-                </button>
-              </div>
-              <textarea
-                id="evalPrompt"
-                className="promptEditor evalPrompt"
-                value={evalPrompt}
-                onChange={(event) => { setEvalPrompt(event.target.value); setEvalPresetId("custom"); }}
-                spellCheck={false}
-              />
-              <div className="evalInputMap">
-                <span>稽核輸入</span>
-                <strong>病人資料</strong><i>＋</i><strong>報告</strong><i>＋</i><strong>評分規則</strong>
-                {evalInput.guidelineIncluded && <><i>＋</i><strong>指引全文</strong></>}
-              </div>
-            </div>
-
-            <div className="outputPane evalOutput">
-              <div className="outputHeader">
-                <div><span className="outputDot amber" /><strong>稽核結果</strong></div>
-                {evaluation ? <span className={`verdict ${verdict.tone}`}>{verdict.label}</span> : <span>等待稽核</span>}
-              </div>
-              <textarea
-                aria-label="eval LLM稽核結果"
-                className="outputEditor"
-                value={evaluation}
-                onChange={(event) => setEvaluation(event.target.value)}
-                placeholder="這裡會列出稽核結論、分項評分、重大問題與具體修改建議。"
-                spellCheck={false}
-              />
-              <div className="outputActions">
-                <button onClick={() => void copy(evaluation, "稽核") } disabled={!evaluation}>{copied === "稽核" ? "已複製" : "複製"}</button>
-                <button onClick={() => downloadText("衛教報告_稽核結果.txt", evaluation)} disabled={!evaluation}>下載 TXT</button>
-              </div>
-            </div>
-          </div>
-
-          <div className="cardActionsColumn">
-            <CompositionPanel input={evalInput} title="本次稽核會送出的輸入" />
-            <BlockerList blockers={evBlockers} label="目前不能稽核的原因" />
-            <div className="cardActions">
-              <button className="primaryButton amberButton" onClick={() => void evaluateReport()} disabled={evaluateDisabled}>
-                {stage === "evaluating" ? <><span className="spinner" />品質稽核中… {elapsedSeconds} 秒</> : "執行品質稽核"}
+                病人版衛教報告
               </button>
-              {stage === "evaluating" && (
-                <button className="stopButton" onClick={stopCurrentRequest}>停止稽核</button>
-              )}
+              <button
+                type="button"
+                className={outputTab === "clinician" ? "active" : ""}
+                onClick={() => setOutputTab("clinician")}
+              >
+                醫師版報告
+              </button>
+            </div>
+            <div className="outputActions">
+              <span className="fieldNote">{output ? `${formatNumber(charCount(output))} 字` : "等待產出"}</span>
+              <button type="button" className="miniButton" onClick={() => copy(output, outputTab)} disabled={!output}>
+                {copied === outputTab ? "已複製" : "複製"}
+              </button>
+              <button
+                type="button"
+                className="miniButton"
+                onClick={() => downloadText(outputTab === "patient" ? "病人版衛教報告.txt" : "醫師版報告.txt", output)}
+                disabled={!output}
+              >
+                下載 TXT
+              </button>
             </div>
           </div>
-        </article>
-      </section>
+          <textarea className="outputEditor" value={output} readOnly spellCheck={false} placeholder="尚未產出。" />
+        </div>
+      </article>
+
+      <article className="stepCard">
+        <div className="stepHeading">
+          <span className="stepNumber">04</span>
+          <div>
+            <p className="eyebrow">PROMPTS</p>
+            <h2>三次呼叫送出的 system prompt</h2>
+            <p className="fieldNote">唯讀。這三個 prompt 由程式定義並隨版本一起送審，不在頁面上編輯。</p>
+          </div>
+        </div>
+        <div className="tabs">
+          {PROMPTS.map((item) => (
+            <button
+              key={item.id}
+              type="button"
+              className={promptId === item.id ? "active" : ""}
+              onClick={() => setPromptId(item.id)}
+            >
+              {item.label}
+            </button>
+          ))}
+        </div>
+        <p className="fieldNote">{activePrompt.role}</p>
+        <textarea className="promptEditor" value={activePrompt.text} readOnly spellCheck={false} />
+      </article>
 
       <section className="safetyNote">
-        <div className="safetyIcon">i</div>
+        <span className="safetyIcon">i</span>
         <div>
           <strong>上線前的必要提醒</strong>
-          <p>此工具是內容生成與稽核工作台，不是診斷系統。正式提供病人前，仍應由醫療團隊核准固定衛教內容、prompt、模型版本與發送規則，並建立人工抽查及版本紀錄。</p>
+          <p>
+            衛教模組 {MODULE_CATALOG_VERSION}、自我照護模組 {SELF_CARE_VERSION}、指引門檻表 {RULES_VERSION}
+            （{RULES_SOURCE}）均尚未經醫療團隊核准。病人版的「您的檢驗數值」一段由模型撰寫，數值已由程式逐一比對來源，
+            但文字未經逐句核准。正式提供病人前，仍應由醫療團隊核准固定內容、prompt 與模型版本，並建立人工抽查與版本紀錄。
+          </p>
         </div>
       </section>
 
-      <footer>
-        <span>糖尿病衛教報告工作台</span>
-        <span>資料僅在本頁處理；按下生成或稽核時才送往 Gemini API。</span>
-        <span className="buildStamp">{`build ${BUILD_ID}`}</span>
+      <footer className="buildStamp">
+        <span>糖尿病衛教報告產生器</span>
+        <span>資料僅在本頁處理；按下產出時才送往 Gemini API。</span>
+        <span>{`build ${BUILD_ID}`}</span>
       </footer>
     </main>
   );
