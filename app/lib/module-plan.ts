@@ -38,37 +38,32 @@ import { formatLabNarrative, type LabNarrativeCheck } from "./lab-narrative.ts";
 
 /**
  * PR 數值的極性——整個 arm C 的臨床意義都掛在這一個常數上，改錯會把每位病人的
- * 風險判定整個反過來，因此把證據寫在這裡，並且只在這裡定義一次。
+ * 風險判定整個反過來，因此把來源寫在這裡，並且只在這裡定義一次。
  *
- * 目前設定為 zero-is-high-risk（PR=0 為高風險），2026-08-04 確認。
+ * **2026-08-04：由資料來源方確認為 zero-is-low-risk。**
+ *   PR=0 日常維持、PR=1 適度介入、PR=2 積極照護。
+ *   同時確認先前流傳的 prompt（v14 及其衍生說法）在這一點上是錯的。
  *
- * 證據一：來源系統的舊批次匯出同時給了數值與中文敘述，同一位病人
- *   PR3=0、PR4=0、PR6=0，中文敘述為
- *   「腎病變:高風險, 神經病變:高風險, 周邊血管病變:高風險」。
- *   PR3／PR4／PR6 分別對應腎病變／神經病變／周邊血管病變。
+ * 這推翻了先前依資料歸納的設定，過程記在這裡以免重蹈：
  *
- * 證據二（內部一致性交叉驗證）：CKD 旗標與 PR3 的關係。
- *   三位 CKD=1 的病人，PR3 全部是 0；唯一 PR3=2 的病人 CKD=0。
- *   若 PR=0 代表低風險，等於風險模型對已有慢性腎臟病的人預測「腎病變低風險」，
- *   對沒有 CKD 的人預測高風險，方向不合理。n 只有 3，不是定論，但與證據一同向。
+ *   歸納一：舊批次匯出同時給了數值與中文敘述，同一位病人 PR3=0、PR4=0、PR6=0，
+ *     敘述為「腎病變:高風險, 神經病變:高風險, 周邊血管病變:高風險」。
+ *     那份對照現在看來要嘛是另一套編碼，要嘛是匯出時就已對錯，不可作為依據。
  *
- * 曾經考慮過相反設定：v14 生成 prompt 雖然也寫「PR=0→積極照護，代表未來惡化
- * 機率較高」，但 v14 本身已被發現多處錯誤，不能單獨作為規格依據。2026-08-04
- * 一度依指示改為 zero-is-low-risk，在上述交叉驗證後改回。
+ *   歸納二：三位 CKD=1 的病人 PR3 全部為 0，唯一 PR3=2 的病人 CKD=0。
+ *     依確認後的極性，等於風險模型對已有慢性腎臟病的人預測「腎病變日常維持」。
+ *     ⚠ 這個現象沒有被解釋掉，值得向來源方追問——但 n 只有 3，
+ *     而且推導規則本來就不對我們公開，不足以推翻書面確認。
  *
- * ⚠ 待辦：仍應向資料來源方或風險模型規格書取得書面確認並記錄於此。
- * 這個常數決定每位病人的風險方向，設錯會讓高風險項目被整批排除。
+ * 教訓：靠六位病人的資料歸納一個決定臨床方向的常數，即使內部一致也可能是錯的。
+ * 這種常數要的是規格，不是統計。
  */
-export const PR_POLARITY: "zero-is-high-risk" | "zero-is-low-risk" = "zero-is-high-risk";
-
-const ZERO_IS_HIGH = PR_POLARITY === "zero-is-high-risk";
-
-/** 風險最高、需要完整模組的 PR 值 */
-export const PR_HIGH = ZERO_IS_HIGH ? 0 : 2;
+/** 風險最低，維持既有照護即可，不納入主題內容 */
+export const PR_LOW = 0;
 /** 中等風險，只給簡短提醒 */
 export const PR_MODERATE = 1;
-/** 風險最低，不納入主題內容 */
-export const PR_LOW = ZERO_IS_HIGH ? 2 : 0;
+/** 風險最高，需要完整模組 */
+export const PR_HIGH = 2;
 
 /** PR 分級用語。沿用 v14 已定義的三級，避免病人版出現「高／中／低風險」標籤。 */
 export const PR_ACTION_TIER: Record<number, string> = {
@@ -298,6 +293,8 @@ export type ResolvedPlan = {
   moderateTopics: TopicDecision[];
   selfCareModuleIds: string[];
   selfCareReasons: Record<string, string>;
+  /** 給模組文字挑選變體用的成分名 */
+  medicationIngredients: string[];
   /** 病人版最終順序（含 BASE 與類型提醒） */
   patientModuleIds: string[];
   targets: ResolvedPlanTargets;
@@ -470,6 +467,7 @@ export function resolvePlan(selection: SelectorOutput | null, facts: PatientFact
     moderateTopics: moderate,
     selfCareModuleIds: selfCare.moduleIds,
     selfCareReasons: selfCare.reasons,
+    medicationIngredients: facts.medicationIngredients,
     patientModuleIds,
     targets: resolveTargets(facts, established.length),
     selection,
@@ -798,13 +796,23 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
     const kidneyOrHeart = plan.decisions.some(
       (item) => item.kind === "established" && (item.topic === 3 || item.topic === 5),
     );
+    const ingredients = plan.medicationIngredients.join(" ");
+    const active: Record<string, boolean> = {
+      "kidney-or-heart": kidneyOrHeart,
+      "sick-day-hold-drugs": /metformin|雙胍|gliflozin/i.test(ingredients),
+      sglt2: /gliflozin/i.test(ingredients),
+    };
     for (const id of plan.selfCareModuleIds) {
       const moduleDef = SELF_CARE_BY_ID.get(id);
       if (!moduleDef) continue;
       let text = moduleDef.patientText;
+      let changed = false;
       for (const variant of moduleDef.definiteVariants ?? []) {
-        if (variant.when === "kidney-or-heart" && kidneyOrHeart) text = text.replace(variant.from, variant.to);
+        if (!active[variant.when]) continue;
+        text = text.replace(variant.from, variant.to);
+        changed = true;
       }
+      if (changed) text = renumber(text);
       lines.push(`◆ ${moduleDef.title}`, "");
       lines.push(text, "");
     }
@@ -814,6 +822,18 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
 }
 
 /** 醫師版：含 DCSI、R1–R7、PR1–PR7 代碼與分數（法規要求），以及個別化目標與安全旗標。 */
+/**
+ * 條列重新編號。變體會插入或移除條目，直接沿用原文的數字會撞號
+ * （實測出現過 1, 2, 2, 3, 4, 4）。
+ */
+function renumber(text: string): string {
+  let n = 0;
+  return text
+    .split("\n")
+    .map((line) => (/^\d+\.\s/.test(line) ? line.replace(/^\d+\.\s/, `${++n}. `) : line))
+    .join("\n");
+}
+
 const DIABETES_TYPE_LABEL: Record<PatientFacts["diabetesType"]["verdict"], string> = {
   "type1-confirmed": "診斷碼指向第 1 型",
   "type2-confirmed": "第 2 型",

@@ -2385,3 +2385,54 @@ test("敘述器回報「程式說沒有但其實有」時要被標記為程式�
   assert.match(rendered, /程式判定為缺檢但實際存在/);
   assert.match(rendered, /項目名稱比對有漏，需修正/);
 });
+
+test("PR 極性依來源方確認：0 日常維持、1 適度介入、2 積極照護", () => {
+  assert.equal(PR_LOW, 0);
+  assert.equal(PR_MODERATE, 1);
+  assert.equal(PR_HIGH, 2);
+
+  const withPr = (value) =>
+    decideTopics(
+      extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-03", [`PR1`]: value }, rawSources: {} }),
+    ).find((item) => item.topic === 1).kind;
+  assert.equal(withPr(2), "prevention-active", "PR=2 積極照護，給完整模組");
+  assert.equal(withPr(1), "prevention-moderate", "PR=1 適度介入，只給簡短提醒");
+  assert.equal(withPr(0), "excluded", "PR=0 日常維持，不納入");
+});
+
+test("生病日衛教依藥物類別觸發，並轉成「事先確認」而非叫病人停藥", () => {
+  const withDrug = (ing) =>
+    extractPatientFacts({
+      userInfo: { gender: "M" },
+      userInput: { REPORT_DATE: "2026-07-23" },
+      rawSources: {
+        medication: {
+          rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: ing }],
+        },
+      },
+    });
+
+  // 50 歲、無併發症的 SGLT2i 使用者：先前完全拿不到生病日衛教
+  const sglt2 = resolvePlan(null, withDrug("DAPAGLIFLOZIN"));
+  assert.ok(sglt2.selfCareModuleIds.includes("SC-SICKDAY"));
+  const report = assemblePatientReport(sglt2, { reportDate: "2026-08-04", dataCutoff: null });
+  assert.match(report, /哪幾種要停、什麼情況停、什麼時候恢復/, "轉成事先確認，不叫病人自行停藥");
+  assert.ok(!/請停用|建議停用/.test(report), "不得叫病人停藥");
+  assert.match(report, /即使血糖不高也可能發生酮酸中毒/, "SGLT2i 最重要的安全訊息");
+  assert.match(report, /泌尿道或生殖器感染/);
+
+  // 變體插入條目後編號要重排，不能出現 1, 2, 2, 3
+  const numbers = [...report.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1]));
+  const sickday = report.slice(report.indexOf("生病或使用類固醇期間"));
+  const seq = [...sickday.matchAll(/^(\d+)\. /gm)].map((m) => Number(m[1])).slice(0, 6);
+  assert.deepEqual(seq, [1, 2, 3, 4, 5, 6]);
+  assert.ok(numbers.length > 0);
+
+  // 只用 metformin 的人要拿到暫停提醒，但不該拿到 SGLT2i 專屬內容
+  const metformin = assemblePatientReport(resolvePlan(null, withDrug("METFORMIN HCL")), {
+    reportDate: "2026-08-04",
+    dataCutoff: null,
+  });
+  assert.match(metformin, /哪幾種要停/);
+  assert.ok(!metformin.includes("酮酸中毒"), "非 SGLT2i 使用者不該看到那一段");
+});

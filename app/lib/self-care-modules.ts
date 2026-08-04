@@ -39,7 +39,7 @@ export type SelfCareModule = {
    * 程式已經知道這位病人有腎臟與心臟問題，正文卻還寫「若同時有腎臟或心臟問題」，
    * 讀起來像是沒在看他的資料。替換是換字，不是加字。
    */
-  definiteVariants?: Array<{ when: "kidney-or-heart"; from: string; to: string }>;
+  definiteVariants?: Array<{ when: "kidney-or-heart" | "sick-day-hold-drugs" | "sglt2"; from: string; to: string }>;
   /** 需要立即或儘速就醫的情況；會被集中到報告末尾。 */
   urgentSigns?: string;
 };
@@ -143,6 +143,23 @@ export const SELF_CARE_MODULES: SelfCareModule[] = [
 2. 這段期間血糖可能比平常高，若醫療團隊有教您自我監測，建議增加測量頻率。
 3. 注意補充水分。發燒、腹瀉或嘔吐時特別容易脫水。
 4. 使用類固醇期間血糖上升是常見反應，停藥後可能回降。用藥前後請主動告知糖尿病照護團隊。`,
+    definiteVariants: [
+      {
+        // 指引表 3「糖尿病用藥注意事項」：metformin 與 SGLT2 抑制劑在患病期間
+        // 建議停用並遵守生病日守則。但我們不能叫病人自行停藥，所以轉成
+        // 「事先問清楚」——行動落在病人身上，決定權留給醫療團隊。
+        when: "sick-day-hold-drugs",
+        from: "1. 生病期間不要自行停用糖尿病藥物，除非醫師另有指示。",
+        to: `1. 生病期間不要自行停用糖尿病藥物，除非醫師另有指示。
+2. 您使用的藥物中，有些在發燒、嚴重腹瀉嘔吐或無法進食而脫水時可能需要暫停。請事先和醫療團隊確認「哪幾種要停、什麼情況停、什麼時候恢復」，把答案記下來備用，不要等生病當下才問。`,
+      },
+      {
+        when: "sglt2",
+        from: "3. 注意補充水分。發燒、腹瀉或嘔吐時特別容易脫水。",
+        to: `3. 注意補充水分並保持會陰部清潔。您使用的藥物中有一類會讓糖分從尿液排出，較容易發生泌尿道或生殖器感染。
+4. 特別注意：這類藥物在少數情況下，即使血糖不高也可能發生酮酸中毒。若出現持續噁心嘔吐、腹痛、呼吸變喘或呼氣有水果味，即使血糖看起來正常也要儘速就醫。`,
+      },
+    ],
     urgentSigns: "生病期間持續嘔吐無法進食、血糖持續偏高不下、呼吸變喘、意識改變或明顯脫水：儘速就醫。",
   },
   {
@@ -211,13 +228,19 @@ export function selectSelfCareModules(
   }
 
   const steroid = /腎上腺素|類固醇|corticoster|prednis|dexameth/i.test(classes);
+  // 指引表 3 為 metformin、SGLT2i、SU、胰島素分別列了生病日注意事項。
+  // 先前只靠類固醇／年齡／併發症數觸發，一位 50 歲、單一併發症的 SGLT2i
+  // 使用者會完全拿不到生病日衛教。
+  const ingredients = facts.medicationIngredients.join(" ");
+  const holdDrugs = /metformin|雙胍|gliflozin/i.test(ingredients);
   const age = facts.ageYears.known ? facts.ageYears.value : null;
   const positives = establishedCount;
-  if (steroid || (age !== null && age >= 65) || positives >= 3) {
+  if (steroid || holdDrugs || (age !== null && age >= 65) || positives >= 3) {
     chosen.push("SC-SICKDAY");
     reasons["SC-SICKDAY"] = [
       steroid ? "申報用藥分類中出現全身性類固醇" : "",
       age !== null && age >= 65 ? `年齡 ${age} 歲` : "",
+      holdDrugs ? "申報用藥含生病期間可能需要暫停的類別（metformin 或 SGLT2 抑制劑）" : "",
       positives >= 3 ? `已發生併發症 ${positives} 項` : "",
     ]
       .filter(Boolean)

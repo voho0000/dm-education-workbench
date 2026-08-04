@@ -36,9 +36,9 @@ export const ARMS: ArmDefinition[] = [
   },
   {
     id: "C",
-    label: "C｜模組選擇流程（草案・未經醫療團隊核准）",
+    label: "C｜一鍵產出兩份報告（草案・未經醫療團隊核准）",
     description:
-      "LLM 只依病人資料輸出模組代碼與選取理由；病人可見正文由程式以固定文字組合，LLM 不改寫、不補數值。",
+      "並行呼叫三次：模組挑選、檢驗判讀（進醫師版）、檢驗敘述（進病人版）。併發症主題與指引目標完全由程式判定，任何一次呼叫失敗都會退回程式輸出。",
     usesGuideline: false,
     llmWritesPatientText: false,
   },

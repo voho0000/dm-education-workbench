@@ -95,6 +95,8 @@ export type PatientFacts = {
   /** 未來風險預測 PR1–PR7 */
   riskPredictions: RiskField[];
   diabetesType: DiabetesTypeEvidence;
+  /** 申報用藥的成分名（去重）。ATC5 分類太粗，SGLT2i 只會顯示「抗糖尿病藥物」。 */
+  medicationIngredients: string[];
   medicationClasses: MedicationClassFact[];
   medicationRecordCount: number;
   medicationDateRange: Maybe<{ earliest: string; latest: string }>;
@@ -368,6 +370,13 @@ export function extractPatientFacts(input: unknown): PatientFacts {
     existingComplications,
     riskPredictions,
     diabetesType,
+    medicationIngredients: [
+      ...new Set(
+        medications
+          .map((record) => (isRecord(record) ? String(record.drug_ing_name ?? "").trim() : ""))
+          .filter(Boolean),
+      ),
+    ].sort(),
     medicationClasses: classes,
     medicationRecordCount: medications.length,
     medicationDateRange: dateRange,

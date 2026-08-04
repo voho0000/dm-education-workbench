@@ -18,6 +18,8 @@
  */
 
 import { GUIDELINE_RULES } from "./guideline-rules.ts";
+import { extractLabFindings, missingCoreAnalytes } from "./lab-findings.ts";
+import { labSectionOf } from "./lab-llm.ts";
 import type { PatientFacts } from "./patient-facts.ts";
 
 export const LAB_NARRATIVE_PROMPT = `你要為一位第 2 型糖尿病人寫「檢驗數值」這一段衛教內容，讀者是病人本人，不是醫療人員。
@@ -54,6 +56,19 @@ export const LAB_NARRATIVE_PROMPT = `你要為一位第 2 型糖尿病人寫「�
     { "item": "程式說沒有、但你在紀錄中找到的核心指標", "as": "它在紀錄中實際的項目名稱" }
   ]
 }`;
+
+/**
+ * 敘述器的完整輸入。網頁與管線共用同一個組裝函式——先前兩邊各自拼字串，
+ * 只要有一邊忘了加缺檢清單，那一邊的輸出就會少一段而沒有任何症狀。
+ */
+export function buildNarrativeInput(llmText: string, facts: PatientFacts): string {
+  const missing = missingCoreAnalytes(extractLabFindings(facts));
+  return [
+    labSectionOf(llmText),
+    "【程式初步判定：可能完全沒有紀錄的核心指標（待你核對）】",
+    missing.length ? missing.map((item) => `- ${item}`).join("\n") : "（無，核心指標都有紀錄）",
+  ].join("\n\n");
+}
 
 export type LabNarrativeCheck = {
   narrative: string;

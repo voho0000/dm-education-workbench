@@ -49,7 +49,7 @@ test("renders the three-arm selector and the guideline status panel", async () =
   assert.match(html, /GUIDELINE A\/B\/C TEST/);
   assert.match(html, /A｜現行流程・不帶入指引/);
   assert.match(html, /B｜現行流程・帶入指引全文/);
-  assert.match(html, /C｜模組選擇流程/);
+  assert.match(html, /C｜一鍵產出兩份報告/);
 
   // 選 B 時使用者必須看得到這五件事，不能只有一句「已載入」。
   assert.match(html, /指引是否已載入/);

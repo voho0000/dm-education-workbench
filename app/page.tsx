@@ -25,6 +25,8 @@ import {
   resolvePlan,
 } from "./lib/module-plan";
 import { extractPatientFacts, factsForSelectorPrompt } from "./lib/patient-facts";
+import { LAB_REVIEW_PROMPT, labSectionOf, parseLabReview } from "./lib/lab-llm";
+import { LAB_NARRATIVE_PROMPT, buildNarrativeInput, parseLabNarrative } from "./lib/lab-narrative";
 import {
   DEFAULT_INPUT_TOKEN_LIMIT,
   GUIDELINE_KNOWN_CHARS,
@@ -468,16 +470,63 @@ export default function Home() {
           reportDate: new Date().toISOString().slice(0, 10),
           dataCutoff: patientFacts.dataCutoff.known ? patientFacts.dataCutoff.value : null,
         };
-        const result = await runGemini(MODULE_SELECTOR_PROMPT, generationInput.text, controller.signal);
-        const selection = parseModuleSelection(result.text);
+        // 三次呼叫互相獨立，並行跑。任何一次失敗都不擋住其餘——
+        // 缺了檢驗敘述就退回程式組出的固定句型，缺了判讀就少一節，
+        // 但主題判定與指引目標完全不依賴 LLM，報告一定產得出來。
+        const labInput = labSectionOf(llmText);
+        const settled = await Promise.allSettled([
+          runGemini(MODULE_SELECTOR_PROMPT, generationInput.text, controller.signal),
+          runGemini(LAB_REVIEW_PROMPT, labInput, controller.signal),
+          runGemini(LAB_NARRATIVE_PROMPT, buildNarrativeInput(llmText, patientFacts), controller.signal),
+        ]);
+        const textOf = (index: number) =>
+          settled[index].status === "fulfilled"
+            ? (settled[index] as PromiseFulfilledResult<{ text: string }>).value.text
+            : null;
+
+        const attempt = <T,>(raw: string | null, parse: (value: string) => T): T | null => {
+          if (!raw) return null;
+          try {
+            return parse(raw);
+          } catch {
+            return null;
+          }
+        };
+        const selection = attempt(textOf(0), parseModuleSelection);
+        const labReview = attempt(textOf(1), (raw) => parseLabReview(raw, patientFacts));
+        const labNarrative = attempt(textOf(2), (raw) => parseLabNarrative(raw, patientFacts));
+
         const plan = resolvePlan(selection, patientFacts);
-        const assembled = assemblePatientReport(plan, options);
+        const assembled = assemblePatientReport(plan, { ...options, labNarrative: labNarrative ?? undefined });
         setReport(assembled);
-        setClinicianTrace(assembleClinicianReport(plan, patientFacts, options));
+        setClinicianTrace(
+          assembleClinicianReport(plan, patientFacts, { ...options, labReview: labReview ?? undefined }),
+        );
         setEvaluation("");
+
         const full = plan.decisions.filter((item) => item.kind !== "excluded" && item.kind !== "prevention-moderate").length;
+        const failed = [
+          selection ? null : "模組挑選",
+          labReview ? null : "檢驗判讀",
+          labNarrative ? null : "檢驗敘述",
+        ].filter(Boolean);
+        const flags = [
+          labNarrative?.foundAfterAll.length
+            ? `⚠ 敘述器在紀錄中找到程式判定為缺檢的 ${labNarrative.foundAfterAll.length} 項，項目名稱比對有漏`
+            : null,
+          labNarrative?.unverifiedValues.length
+            ? `⚠ 敘述引用了 ${labNarrative.unverifiedValues.length} 個來源中找不到的數值`
+            : null,
+          labReview?.unverifiedValues.length
+            ? `⚠ 判讀引用了 ${labReview.unverifiedValues.length} 個來源中找不到的數值`
+            : null,
+        ].filter(Boolean);
         setNotice(
-          `完成：程式依 R／PR 納入 ${full} 個併發症主題、${plan.moderateTopics.length} 個簡短提醒、${plan.selfCareModuleIds.length} 個自我照護模組。病人可見正文完全來自固定文字；LLM 只提供優先排序與提醒${plan.selection?.disagreements.length ? `，並對程式判定提出 ${plan.selection.disagreements.length} 點不同意見（已記錄未採用）` : ""}。`,
+          [
+            `完成：程式依 R／PR 納入 ${full} 個併發症主題、${plan.moderateTopics.length} 個簡短提醒、${plan.selfCareModuleIds.length} 個自我照護模組。`,
+            failed.length ? `${failed.join("、")}未取得，該部分已退回程式輸出。` : "三次 LLM 呼叫全部成功。",
+            ...flags,
+          ].join(" "),
         );
         return assembled;
       }
@@ -977,7 +1026,7 @@ export default function Home() {
             <BlockerList blockers={genBlockers} label="目前不能生成的原因" />
             <div className="cardActions">
               <button className="primaryButton" onClick={() => void generateReport()} disabled={generateDisabled}>
-                {stage === "generating" ? <><span className="spinner" />Gemini 生成中… {elapsedSeconds} 秒</> : "生成衛教報告"}
+                {stage === "generating" ? <><span className="spinner" />{arm === "C" ? "三次呼叫並行中" : "Gemini 生成中"}… {elapsedSeconds} 秒</> : arm === "C" ? "一鍵產出兩份報告" : "生成衛教報告"}
               </button>
               <button className="secondaryButton runAll" onClick={() => void generateAndEvaluate()} disabled={generateDisabled}>
                 生成並接續稽核
