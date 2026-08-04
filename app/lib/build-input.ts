@@ -105,8 +105,38 @@ export function buildEvalInput(args: EvalInputArgs): ComposedInput {
 }
 
 /** arm C：模組選擇器的輸入只有精簡事實，沒有原始申報明細，也沒有指引。 */
-export function buildSelectorInput(args: { systemPrompt: string; factsText: string }): ComposedInput {
-  return compose(args.systemPrompt, [{ label: "病人事實摘要", text: args.factsText }], { include: false, text: "" });
+
+/**
+ * arm C 一次按下會並行送出三個請求，估算必須是三者的總和。
+ * 先前只算了模組挑選那一次，把實際成本低估了一半以上。
+ */
+export function buildArmCInput(args: {
+  selectorPrompt: string;
+  factsText: string;
+  labReviewPrompt: string;
+  labText: string;
+  narrativePrompt: string;
+  narrativeText: string;
+}): ComposedInput {
+  const calls = [
+    { label: "① 模組挑選：system prompt", text: args.selectorPrompt },
+    { label: "① 模組挑選：病人事實摘要", text: args.factsText },
+    { label: "② 檢驗判讀：system prompt", text: args.labReviewPrompt },
+    { label: "② 檢驗判讀：檢驗紀錄", text: args.labText },
+    { label: "③ 檢驗敘述：system prompt", text: args.narrativePrompt },
+    { label: "③ 檢驗敘述：檢驗紀錄與缺檢清單", text: args.narrativeText },
+  ];
+  const parts = calls.map((item) => part(item.label, item.text));
+  return {
+    text: calls.map((item) => item.text).join("\n\n"),
+    systemPrompt: args.selectorPrompt,
+    parts,
+    totalChars: parts.reduce((sum, item) => sum + item.chars, 0),
+    totalTokens: parts.reduce((sum, item) => sum + item.tokens, 0),
+    hasEstimate: true,
+    guidelineIncluded: false,
+    guidelineRequestedButMissing: false,
+  };
 }
 
 export function formatComposition(input: ComposedInput): string {

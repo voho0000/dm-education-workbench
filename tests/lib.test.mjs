@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises";
 import test from "node:test";
 
 import { GUIDELINE_KNOWN_CHARS, GUIDELINE_KNOWN_TOKENS, estimateTokens, guidelineTokens } from "../app/lib/tokens.ts";
-import { buildEvalInput, buildGenerationInput, GUIDELINE_HEADING } from "../app/lib/build-input.ts";
+import { buildArmCInput, buildEvalInput, buildGenerationInput, GUIDELINE_HEADING } from "../app/lib/build-input.ts";
 import { evalBlockers, generateBlockers, hasHardBlocker } from "../app/lib/blockers.ts";
 import { describeGeminiFailure } from "../app/lib/gemini-errors.ts";
 import { formatPatientJson } from "../app/lib/format-patient.ts";
@@ -2435,4 +2435,19 @@ test("生病日衛教依藥物類別觸發，並轉成「事先確認」而非�
   });
   assert.match(metformin, /哪幾種要停/);
   assert.ok(!metformin.includes("酮酸中毒"), "非 SGLT2i 使用者不該看到那一段");
+});
+
+test("arm C 的輸入估算要涵蓋三次呼叫，不能只算模組挑選那一次", () => {
+  const input = buildArmCInput({
+    selectorPrompt: "S".repeat(100),
+    factsText: "F".repeat(200),
+    labReviewPrompt: "R".repeat(300),
+    labText: "L".repeat(400),
+    narrativePrompt: "N".repeat(500),
+    narrativeText: "T".repeat(600),
+  });
+  assert.equal(input.parts.length, 6, "三次呼叫各兩段");
+  assert.equal(input.totalChars, 100 + 200 + 300 + 400 + 500 + 600);
+  // 每一段都要標出是哪一次呼叫，否則看不出成本花在哪
+  assert.ok(input.parts.every((p) => /^[①②③]/.test(p.label)));
 });

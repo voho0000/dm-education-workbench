@@ -11,7 +11,7 @@ import {
 import { BUILD_ID } from "./build-id";
 import { ARMS, type ArmId, armById } from "./lib/arms";
 import { evalBlockers, generateBlockers, hasHardBlocker, type Blocker, type WorkbenchState } from "./lib/blockers";
-import { buildEvalInput, buildGenerationInput, buildSelectorInput, type ComposedInput } from "./lib/build-input";
+import { buildArmCInput, buildEvalInput, buildGenerationInput, type ComposedInput } from "./lib/build-input";
 import { formatPatientJson } from "./lib/format-patient";
 import { GeminiRequestError, callGemini, countTokens } from "./lib/gemini-client";
 import { describeGeminiFailure, type GeminiFailure } from "./lib/gemini-errors";
@@ -165,6 +165,7 @@ export default function Home() {
   const [showApiKey, setShowApiKey] = useState(false);
   const [modelChoice, setModelChoice] = useState(DEFAULT_MODEL);
   const [customModel, setCustomModel] = useState("");
+  const [armCPromptId, setArmCPromptId] = useState<"selector" | "labReview" | "narrative">("selector");
   const [generatorPresetId, setGeneratorPresetId] = useState<PromptPresetId>("workbench");
   const [evalPresetId, setEvalPresetId] = useState<PromptPresetId>("workbench");
   const [generatorPrompt, setGeneratorPrompt] = useState(WORKBENCH_GENERATOR_PROMPT);
@@ -193,6 +194,8 @@ export default function Home() {
   const verdict = useMemo(() => verdictFromEval(evaluation), [evaluation]);
   const model = modelChoice === CUSTOM_MODEL ? customModel.trim() : modelChoice;
   const armDef = armById(arm);
+  const armCPrompt =
+    armCPromptId === "labReview" ? LAB_REVIEW_PROMPT : armCPromptId === "narrative" ? LAB_NARRATIVE_PROMPT : MODULE_SELECTOR_PROMPT;
   const includeGuideline = arm === "B";
 
   const onGitHubPages =
@@ -219,7 +222,15 @@ export default function Home() {
       const factsText = patientFacts
         ? `${factsForSelectorPrompt(patientFacts)}\n\n${decisionsForPrompt(resolvePlan(null, patientFacts))}`
         : "";
-      return buildSelectorInput({ systemPrompt: MODULE_SELECTOR_PROMPT, factsText });
+      // 一次按下會並行送出三個請求，估算要是三者的總和。
+      return buildArmCInput({
+        selectorPrompt: MODULE_SELECTOR_PROMPT,
+        factsText,
+        labReviewPrompt: LAB_REVIEW_PROMPT,
+        labText: labSectionOf(llmText),
+        narrativePrompt: LAB_NARRATIVE_PROMPT,
+        narrativeText: patientFacts ? buildNarrativeInput(llmText, patientFacts) : "",
+      });
     }
     return buildGenerationInput({
       systemPrompt: generatorPrompt,
@@ -967,7 +978,20 @@ export default function Home() {
               </p>
 
               <div className="labelRow">
-                <label className="fieldLabel" htmlFor="generatorPrompt">生成用 system prompt</label>
+                <label className="fieldLabel" htmlFor="generatorPrompt">
+                  {arm === "C" ? "三次呼叫使用的 system prompt（唯讀）" : "生成用 system prompt"}
+                </label>
+                {arm === "C" ? (
+                  <select
+                    className="textInput"
+                    value={armCPromptId}
+                    onChange={(event) => setArmCPromptId(event.target.value as typeof armCPromptId)}
+                  >
+                    <option value="selector">① 模組挑選（只回代碼與優先序）</option>
+                    <option value="labReview">② 檢驗判讀（進醫師版）</option>
+                    <option value="narrative">③ 檢驗敘述（進病人版）</option>
+                  </select>
+                ) : null}
                 <button className="miniButton" onClick={restoreGeneratorPrompt}>
                   {generatorPresetId === "custom" ? "恢復工作台預設" : "重新載入此版本"}
                 </button>
@@ -975,7 +999,7 @@ export default function Home() {
               <textarea
                 id="generatorPrompt"
                 className="promptEditor"
-                value={arm === "C" ? MODULE_SELECTOR_PROMPT : generatorPrompt}
+                value={arm === "C" ? armCPrompt : generatorPrompt}
                 onChange={(event) => { setGeneratorPrompt(event.target.value); setGeneratorPresetId("custom"); }}
                 readOnly={arm === "C"}
                 spellCheck={false}
