@@ -237,6 +237,11 @@ function valueText(finding: AnalyteFinding): string {
  * 病人版敘述。刻意不寫筆數——「共 1819 筆」對病人沒有意義，只會造成困惑，
  * 而且那個數字是統計出來的，不是檢驗結果。
  */
+/** 值的文字呈現（含不等號與單位），摘要與內文共用同一套，避免摘要比內文不準。 */
+export function valueSummary(finding: AnalyteFinding): string {
+  return `${valueText(finding)}${cleanUnit(finding.unit)}`;
+}
+
 export function describeRange(finding: AnalyteFinding): string {
   const months = finding.feeMonths.length ? `費用年月 ${finding.feeMonths.join("、")}` : "來源未提供年月";
   const many = new Set(finding.values.map((v) => v.raw)).size > 3 ? "多次紀錄，" : "";
@@ -399,15 +404,19 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
 
   // 腎功能不全或貧血時，糖化血色素不能單獨解讀。
   // 這件事醫師版本來就有寫，但病人版沒有——病人看到 6.5% 只會以為控制得很好。
+  // 「HbA1c 不可盡信」是一個推論，需要持續性的依據。用 hb.min < 11 等於
+  // 一筆兩年前的舊值就永久觸發——五位病人全部命中，那個警語就沒有資訊量。
+  // 改為連最高的一筆都低於 11（貧血是持續狀態），或有腎功能不全。
+  const persistentAnaemia = Boolean(hb && hb.max < 11);
   const a1c = get("HbA1c");
-  if (a1c && (kidneyImpaired || (hb && hb.min < 11))) {
+  if (a1c && (kidneyImpaired || persistentAnaemia)) {
     hits.push({
       code: "hba1c-unreliable",
       analyte: "HbA1c",
       ruleId: "hba1c-unreliable",
       severity: "attention",
-      clinicianMessage: `糖化血色素 ${a1c.min === a1c.max ? a1c.min : `${a1c.min}–${a1c.max}`} % 在${kidneyImpaired ? "腎功能不全" : ""}${kidneyImpaired && hb && hb.min < 11 ? "合併" : ""}${hb && hb.min < 11 ? "貧血" : ""}的情況下可能低估實際血糖，建議併用自我血糖監測或糖化白蛋白判讀。`,
-      patientMessage: `您的糖化血色素是 ${a1c.min === a1c.max ? a1c.min : `${a1c.min}–${a1c.max}`}%，看起來在目標範圍內，但這個數字對您可能不準。${kidneyImpaired ? "腎功能下降" : ""}${kidneyImpaired && hb && hb.min < 11 ? "與" : ""}${hb && hb.min < 11 ? "貧血" : ""}都會讓它比實際血糖低。請不要只看這個數字就認為血糖控制良好，回診時請醫療團隊一起看您平時的血糖紀錄。`,
+      clinicianMessage: `糖化血色素 ${a1c.min === a1c.max ? a1c.min : `${a1c.min}–${a1c.max}`} % 在${kidneyImpaired ? "腎功能不全" : ""}${kidneyImpaired && persistentAnaemia ? "合併" : ""}${persistentAnaemia ? "貧血" : ""}的情況下可能低估實際血糖，建議併用自我血糖監測或糖化白蛋白判讀。`,
+      patientMessage: `您的糖化血色素是 ${a1c.min === a1c.max ? a1c.min : `${a1c.min}–${a1c.max}`}%，看起來在目標範圍內，但這個數字對您可能不準。${kidneyImpaired ? "腎功能下降" : ""}${kidneyImpaired && persistentAnaemia ? "與" : ""}${persistentAnaemia ? "貧血" : ""}都會讓它比實際血糖低。請不要只看這個數字就認為血糖控制良好，回診時請醫療團隊一起看您平時的血糖紀錄。`,
       citation: null,
     });
   }

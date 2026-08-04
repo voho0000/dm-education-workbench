@@ -571,7 +571,7 @@ test("醫師版不列每份都一樣的通則性廢話", () => {
   }
   // 保留的仍要在
   assert.match(report, /DCSI 總分：6/);
-  assert.match(report, /一、併發症現況與風險預測/);
+  assert.match(report, /、併發症現況與風險預測/);
   assert.match(report, /個別化目標/);
 });
 

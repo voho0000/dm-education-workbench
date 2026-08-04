@@ -30,6 +30,7 @@ import {
   evaluateThresholds,
   extractLabFindings,
   lowestMeasuredGlucose,
+  valueSummary,
   type Analyte,
 } from "./lab-findings.ts";
 import { ANALYTE_TO_MODULE, compareToTargets, outOfTargetOnly } from "./target-comparison.ts";
@@ -319,6 +320,8 @@ export type ResolvedPlan = {
   evaluatedAnalytes: number;
   /** 已由程式逐條判定的檢驗項目，供判讀器那一段去重 */
   evaluatedAnalyteKeys: string[];
+  /** 摘要用：核心指標的原始判定結果 */
+  labFindingsForSummary: Array<{ analyte: string; display: string }>;
   /** 有數值但未納入判定的檢驗項目種類數 */
   unevaluatedNumericItems: number;
 };
@@ -485,6 +488,10 @@ export function resolvePlan(selection: SelectorOutput | null, facts: PatientFact
     medicationLabGapDays,
     evaluatedAnalytes: labFindings.length,
     evaluatedAnalyteKeys: labFindings.map((item) => item.analyte),
+    labFindingsForSummary: labFindings.map((item) => ({
+      analyte: item.analyte,
+      display: valueSummary(item),
+    })),
     unevaluatedNumericItems: facts.labItems.filter(
       (item) => item.rawValues.some((v) => /^[≧≥><＞＜]?\s*\d/.test(v.trim())),
     ).length - labFindings.length,
@@ -783,6 +790,54 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
   const NUM = ["一", "二", "三", "四", "五", "六", "七", "八"];
   let sectionNo = 0;
   const section = (title: string) => `${NUM[sectionNo++]}、${title}`;
+
+  // 摘要：把下面五節壓成幾行，只做壓縮不做排序——哪一項最該處理由醫師判斷。
+  // 每個數字下面都還會再出現一次，這是摘要的本質，不是重複的瑕疵。
+  {
+    const brief: string[] = [];
+    const who = [
+      facts.ageYears.known ? `${facts.ageYears.value} 歲` : null,
+      facts.sex.known ? facts.sex.value : null,
+      facts.diabetesDurationYears.known ? `病程 ${facts.diabetesDurationYears.value} 年` : null,
+      facts.dcsiTotal.known ? `DCSI ${facts.dcsiTotal.value}` : null,
+    ].filter(Boolean);
+    if (who.length) brief.push(`  ${who.join("｜")}`);
+
+    const established = plan.decisions.filter((item) => item.kind === "established").map((item) => item.topicName);
+    const predicted = plan.decisions
+      .filter((item) => item.kind === "prevention-active" || item.kind === "prevention-moderate")
+      .map((item) => `${item.topicName}（${PR_ACTION_TIER[item.prValue ?? -1] ?? "未分級"}）`);
+    if (established.length) brief.push(`  已發生 ${established.length} 項：${established.join("、")}`);
+    if (predicted.length) brief.push(`  風險預測：${predicted.join("、")}`);
+
+    // 核心指標只挑醫師一定會先看的四項，其餘留在下面
+    const KEY: Array<[string, string]> = [
+      ["HbA1c", "HbA1c"],
+      ["eGFR", "eGFR"],
+      ["UACR", "UACR"],
+      ["glucose-unspecified", "血糖"],
+      ["fasting-glucose", "飯前血糖"],
+    ];
+    const byAnalyte = new Map(plan.labFindingsForSummary.map((item) => [item.analyte, item]));
+    const nums = KEY.map(([analyte, label]) => {
+      const found = byAnalyte.get(analyte);
+      return found ? `${label} ${found.display}` : null;
+    }).filter(Boolean);
+    if (nums.length) brief.push(`  ${nums.join("｜")}`);
+
+    const unreliable = plan.labThresholds.some((hit) => hit.code === "hba1c-unreliable");
+    if (unreliable) brief.push("  ⚠ HbA1c 在本例可能低估實際血糖，不宜單獨解讀。");
+
+    const urgent = plan.labThresholds.filter((hit) => hit.severity === "urgent").length;
+    const attention = plan.labThresholds.filter((hit) => hit.severity === "attention").length;
+    if (urgent || attention) {
+      brief.push(`  需核實 ${urgent + attention} 項${urgent ? `（其中 ${urgent} 項標為優先核實）` : ""}。`);
+    }
+
+    if (brief.length) {
+      lines.push(section("摘要"), ...brief, "");
+    }
+  }
 
   lines.push(section("併發症現況與風險預測"));
   lines.push(`DCSI 總分：${facts.dcsiTotal.known ? facts.dcsiTotal.value : "來源未提供"}`);
