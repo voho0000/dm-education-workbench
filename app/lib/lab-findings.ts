@@ -237,11 +237,6 @@ function valueText(finding: AnalyteFinding): string {
  * 病人版敘述。刻意不寫筆數——「共 1819 筆」對病人沒有意義，只會造成困惑，
  * 而且那個數字是統計出來的，不是檢驗結果。
  */
-/** 值的文字呈現（含不等號與單位），摘要與內文共用同一套，避免摘要比內文不準。 */
-export function valueSummary(finding: AnalyteFinding): string {
-  return `${valueText(finding)}${cleanUnit(finding.unit)}`;
-}
-
 export function describeRange(finding: AnalyteFinding): string {
   const months = finding.feeMonths.length ? `費用年月 ${finding.feeMonths.join("、")}` : "來源未提供年月";
   const many = new Set(finding.values.map((v) => v.raw)).size > 3 ? "多次紀錄，" : "";
