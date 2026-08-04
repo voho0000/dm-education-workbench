@@ -317,6 +317,95 @@ textarea { font-family: inherit; resize: vertical; }
   font-size: 12px; line-height: 1.75;
 }
 
+/* ── 管線 ─────────────────────────────────────────────── */
+.pipeBoard { margin: 0; padding: 0; list-style: none; }
+
+/* 站與站之間畫一段連線，讀起來才像一條產線而不是六張獨立卡片 */
+.pipeStation {
+  position: relative;
+  margin: 0 0 26px;
+  padding: 16px 18px;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: white;
+}
+.pipeStation:last-child { margin-bottom: 0; }
+.pipeStation::after {
+  content: "";
+  position: absolute; left: 29px; bottom: -26px;
+  width: 2px; height: 26px;
+  background: var(--line);
+}
+.pipeStation:last-child::after { display: none; }
+.pipeStation-llm { border-color: rgba(93, 82, 214, 0.3); background: #fdfdff; }
+
+.pipeStationHead { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.pipeIndex {
+  flex: none;
+  width: 24px; height: 24px;
+  display: grid; place-items: center;
+  border-radius: 50%;
+  background: var(--ink); color: white;
+  font-size: 11px; font-weight: 800;
+}
+.pipeStation-llm .pipeIndex { background: var(--llm); }
+.pipeStationHead h4 { margin: 0; color: var(--ink); font-size: 14px; font-weight: 750; }
+.pipeKind {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--paper); color: var(--muted);
+  font-size: 11px; font-weight: 700;
+}
+.pipeStation-llm .pipeKind { background: var(--llm-soft); color: #453cab; }
+.pipeState {
+  margin-left: auto;
+  padding: 3px 10px;
+  border-radius: 999px;
+  font-size: 11px; font-weight: 750;
+}
+.pipeState-idle { background: var(--paper); color: var(--muted); }
+.pipeState-running { background: #f7e9cd; color: #67451e; }
+.pipeState-ok { background: var(--teal-soft); color: var(--teal-dark); }
+.pipeState-failed { background: rgba(168, 60, 53, 0.12); color: #8d322c; }
+.pipeState-skipped { background: var(--paper); color: var(--muted); }
+.pipeRole { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.75; }
+
+.pipePort { margin: 8px 0 0; }
+.pipePortHead {
+  width: 100%;
+  padding: 8px 12px;
+  display: flex; align-items: baseline; gap: 10px;
+  border: 1px solid var(--line); border-radius: 9px;
+  background: #fcfcfa; color: var(--ink);
+  font-size: 12px; text-align: left;
+  cursor: pointer;
+}
+.pipePortHead:disabled { cursor: default; opacity: 0.5; }
+.pipePort-out .pipePortHead { background: white; }
+.pipePortArrow { flex: none; color: var(--muted); font-size: 11px; font-weight: 700; }
+.pipePortLabel { flex: 1; min-width: 0; }
+.pipePortSize { flex: none; color: var(--muted); font-size: 11px; }
+/* 全文可能上萬字，給固定高度自己捲，不要把整頁撐開 */
+.pipePortBody {
+  margin: 6px 0 0;
+  padding: 12px 14px;
+  max-height: 320px;
+  overflow: auto;
+  border: 1px solid var(--line); border-radius: 9px;
+  background: var(--paper); color: #2c424a;
+  font-size: 11px; line-height: 1.75;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+  white-space: pre-wrap; word-break: break-word;
+}
+
+.pipeTaken, .pipeProblems { margin: 10px 0 0; padding: 0 0 0 18px; font-size: 12px; line-height: 1.8; }
+.pipeTaken { color: #2c424a; }
+.pipeProblems { color: #8d322c; }
+
+@media (max-width: 760px) {
+  .pipeStation { padding: 14px; }
+  .pipeStation::after { left: 25px; }
+}
+
 /* ── 判定路徑 ─────────────────────────────────────────── */
 .traceToggle { margin: 14px 0 0; }
 .traceToggle > summary {

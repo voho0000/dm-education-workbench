@@ -4,6 +4,7 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "re
 import { BUILD_ID } from "./build-id";
 import { ContentLibrary } from "./content-library";
 import { DecisionTrace } from "./decision-trace";
+import { Pipeline, type Station, type StationState } from "./pipeline";
 import { hasHardBlocker, runBlockers, type Blocker } from "./lib/blockers";
 import { buildRunInput, type ComposedInput } from "./lib/build-input";
 import { MODULE_CATALOG_VERSION } from "./lib/education-modules";
@@ -26,7 +27,7 @@ import { SELF_CARE_VERSION } from "./lib/self-care-modules";
 import { DEFAULT_INPUT_TOKEN_LIMIT, charCount, formatNumber } from "./lib/tokens";
 
 type Stage = "idle" | "running";
-type OutputTab = "patient" | "clinician";
+type OutputTab = "patient" | "clinician" | "rawSelector" | "rawLabReview" | "rawNarrative";
 type PromptId = "selector" | "labReview" | "narrative";
 
 const MAX_FILE_BYTES = 5 * 1024 * 1024;
@@ -60,6 +61,14 @@ const PROMPTS: Array<{ id: PromptId; label: string; text: string; role: string }
     role: "把檢驗結果寫成給病人看的段落。這是報告中唯一未經逐句核准的文字。",
     text: LAB_NARRATIVE_PROMPT,
   },
+];
+
+const OUTPUT_TABS: Array<{ id: OutputTab; label: string; filename: string; note: string }> = [
+  { id: "patient", label: "病人版衛教報告", filename: "病人版衛教報告.txt", note: "由固定模組組裝，只有「您的檢驗數值」一段是模型寫的。" },
+  { id: "clinician", label: "醫師版報告", filename: "醫師版報告.txt", note: "由固定模組組裝，附指引章表與頁次。" },
+  { id: "rawSelector", label: "① 原始回應", filename: "原始回應-模組挑選.txt", note: "模組挑選的完整回應，未解析。它的意見改不了程式的主題判定，僅供核對。" },
+  { id: "rawLabReview", label: "② 原始回應", filename: "原始回應-檢驗判讀.txt", note: "檢驗判讀的完整回應，未解析。報告中只採用通過數值比對的部分。" },
+  { id: "rawNarrative", label: "③ 原始回應", filename: "原始回應-檢驗敘述.txt", note: "檢驗敘述的完整回應，未解析。報告中的版本已經過數值比對與禁止事項掃描。" },
 ];
 
 /**
@@ -216,10 +225,23 @@ export default function Home() {
   const [modelChoice, setModelChoice] = useState(DEFAULT_MODEL);
   const [customModel, setCustomModel] = useState("");
   const [timeoutMinutes, setTimeoutMinutes] = useState(DEFAULT_TIMEOUT_MINUTES);
-  const [promptId, setPromptId] = useState<PromptId>("selector");
   const [outputTab, setOutputTab] = useState<OutputTab>("patient");
   const [patientReport, setPatientReport] = useState("");
   const [clinicianReport, setClinicianReport] = useState("");
+  /**
+   * 三次呼叫的原始回應，未經解析。
+   *
+   * 組裝後的報告看不出模型到底回了什麼——解析器抽走它要的欄位，其餘丟掉。
+   * 要判斷是模型答錯還是解析器沒接住，只能看這個。
+   */
+  const [rawOutputs, setRawOutputs] = useState<Record<string, string>>({});
+  /** 每次呼叫的狀態，以及程式從它的產出裡採用了什麼、丟掉什麼。 */
+  const [callState, setCallState] = useState<Record<PromptId, StationState>>({
+    selector: "idle",
+    labReview: "idle",
+    narrative: "idle",
+  });
+  const [callNotes, setCallNotes] = useState<Record<string, { taken: string[]; problems: string[] }>>({});
   const [checks, setChecks] = useState<string[]>([]);
   const [stage, setStage] = useState<Stage>("idle");
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
@@ -328,6 +350,9 @@ export default function Home() {
     setFailure(null);
     setNotice("");
     setChecks([]);
+    setRawOutputs({});
+    setCallNotes({});
+    setCallState({ selector: "running", labReview: "running", narrative: "running" });
     if (hasHardBlocker(blockers) || !patientFacts) return;
 
     setStage("running");
@@ -368,9 +393,80 @@ export default function Home() {
         }
       };
 
+      setRawOutputs({
+        rawSelector: textOf(0) ?? "",
+        rawLabReview: textOf(1) ?? "",
+        rawNarrative: textOf(2) ?? "",
+      });
+
       const selection = attempt(textOf(0), parseModuleSelection);
       const labReview = attempt(textOf(1), (raw) => parseLabReview(raw, patientFacts));
       const labNarrative = attempt(textOf(2), (raw) => parseLabNarrative(raw, patientFacts));
+
+      setCallState({
+        selector: settled[0].status === "fulfilled" ? (selection ? "ok" : "failed") : "failed",
+        labReview: settled[1].status === "fulfilled" ? (labReview ? "ok" : "failed") : "failed",
+        narrative: settled[2].status === "fulfilled" ? (labNarrative ? "ok" : "failed") : "failed",
+      });
+      setCallNotes({
+        selector: {
+          taken: selection
+            ? [
+                `優先序 ${selection.priorities.length} 項，其中 ${
+                  selection.priorities.length - resolvePlan(selection, patientFacts).rejectedPriorities.length
+                } 項在已納入清單中、被採用`,
+                `clinician_notes ${selection.clinician_notes.length} 則、data_concerns ${selection.data_concerns.length} 則：目前一律丟棄，不進任何報告`,
+                `disagreements ${selection.disagreements.length} 則：僅供核對，改不了程式的主題判定`,
+              ]
+            : [],
+          problems: selection
+            ? [
+                ...(resolvePlan(selection, patientFacts).rejectedPriorities.length
+                  ? [`指定了 ${resolvePlan(selection, patientFacts).rejectedPriorities.length} 個不在納入清單中的模組，已忽略`]
+                  : []),
+                ...(selection.echo &&
+                patientFacts.dcsiTotal.known &&
+                selection.echo.dcsi !== null &&
+                selection.echo.dcsi !== patientFacts.dcsiTotal.value
+                  ? [`回抄的 DCSI（${selection.echo.dcsi}）與輸入不符，可能不是同一位病人`]
+                  : []),
+              ]
+            : ["回應無法解析，這一站的產出全部不採用"],
+        },
+        labReview: {
+          taken: labReview
+            ? [
+                `異常項目 ${labReview.review.abnormal.length} 則、系統性歸納 ${labReview.review.groups.length} 組，進醫師版`,
+                `涵蓋來源檢驗 ${formatNumber(labReview.sourceRecords)} 筆`,
+              ]
+            : [],
+          problems: labReview
+            ? [
+                ...(labReview.unverifiedValues.length
+                  ? [`${labReview.unverifiedValues.length} 個數值在來源中找不到，已在報告中就地標示`]
+                  : []),
+                ...(labReview.unknownItems.length ? [`${labReview.unknownItems.length} 個項目名稱來源中沒有`] : []),
+              ]
+            : ["回應無法解析，醫師版退回程式輸出"],
+        },
+        narrative: {
+          taken: labNarrative ? [`敘述 ${formatNumber(charCount(labNarrative.narrative))} 字，放進病人版的「您的檢驗數值」`] : [],
+          problems: labNarrative
+            ? [
+                ...(labNarrative.unverifiedValues.length
+                  ? [`${labNarrative.unverifiedValues.length} 個數值在來源中找不到`]
+                  : []),
+                ...(labNarrative.uncitedNumbers.length
+                  ? [`${labNarrative.uncitedNumbers.length} 個數字既未引用也不在門檻表：${labNarrative.uncitedNumbers.join("、")}`]
+                  : []),
+                ...(labNarrative.bannedPhrases.length ? [`踩到禁止事項：${labNarrative.bannedPhrases.join("、")}`] : []),
+                ...(labNarrative.foundAfterAll.length
+                  ? [`程式判缺檢但實際存在 ${labNarrative.foundAfterAll.length} 項，是程式的漏`]
+                  : []),
+              ]
+            : ["回應無法解析，病人版退回固定句型"],
+        },
+      });
 
       const options = {
         reportDate: new Date().toISOString().slice(0, 10),
@@ -435,8 +531,115 @@ export default function Home() {
     window.setTimeout(() => setCopied(""), 1500);
   }
 
-  const activePrompt = PROMPTS.find((item) => item.id === promptId) ?? PROMPTS[0];
-  const output = outputTab === "patient" ? patientReport : clinicianReport;
+  /**
+   * 管線的每一站。程式站與 LLM 站放在同一條線上，因為對讀的人來說
+   * 它們都是「東西進去、東西出來」的一站；差別在旁邊的標記，不在版型。
+   */
+  const stations = useMemo<Station[]>(() => {
+    const done = (value: string): StationState => (value ? "ok" : rawInput.trim() ? "idle" : "idle");
+    const llm = (id: PromptId, title: string, role: string, input: string, tabId: OutputTab): Station => {
+      const prompt = PROMPTS.find((item) => item.id === id);
+      return {
+        id,
+        kind: "llm",
+        title,
+        role,
+        state: callState[id],
+        systemPrompt: prompt?.text,
+        inputs: [{ label: "送出的輸入", text: input }],
+        outputs: [{ label: "原始回應（未解析）", text: rawOutputs[tabId] ?? "" }],
+        taken: callNotes[id]?.taken,
+        problems: callNotes[id]?.problems,
+      };
+    };
+
+    return [
+      {
+        id: "ingest",
+        kind: "program",
+        title: "讀取申報 JSON",
+        role: "抽出用藥、檢驗、R／PR／CKD 等結構化欄位，另外整理一份給模型讀的純文字。不改任何數值。",
+        state: done(llmText),
+        inputs: [{ label: "原始 JSON", text: rawInput }],
+        outputs: [{ label: "LLM 好讀文字", text: llmText }],
+        taken: patientFacts
+          ? [
+              `檢驗 ${formatNumber(patientFacts.labRecordCount)} 筆、用藥 ${formatNumber(patientFacts.medicationRecordCount)} 筆`,
+              patientFacts.labHasDrawDates ? "檢驗有採檢日" : "檢驗只有費用年月，沒有採檢日，因此不做任何時序敘述",
+            ]
+          : [],
+      },
+      {
+        id: "decide",
+        kind: "program",
+        title: "確定性判定",
+        role: "依 R／PR 與指引門檻表決定主題、目標與追蹤間隔。這一站不呼叫模型，換模型不會改變結果。",
+        state: preview ? "ok" : "idle",
+        inputs: [{ label: "確定性事實", text: selectorInput }],
+        outputs: [{ label: "判定結果（也是①的輸入之一）", text: selectorInput }],
+        taken: preview
+          ? [
+              `納入 ${preview.decisions.filter((item) => item.kind !== "excluded").length}／${preview.decisions.length} 個併發症主題`,
+              `自我照護模組 ${preview.selfCareModuleIds.length} 個、指引目標 ${preview.targets.targets.filter((item) => item.value).length} 項`,
+              `檢驗門檻判定 ${preview.labThresholds.length} 則`,
+            ]
+          : [],
+      },
+      llm(
+        "selector",
+        "① 模組挑選",
+        "只回模組代碼與優先序。它改不了上一站的主題判定，寫的任何文字也不會出現在病人版。",
+        selectorInput,
+        "rawSelector",
+      ),
+      llm(
+        "labReview",
+        "② 檢驗判讀",
+        "讀原始檢驗紀錄，找程式門檻沒涵蓋到的異常。結果進醫師版，每個數值都會被比對回來源。",
+        labInput,
+        "rawLabReview",
+      ),
+      llm(
+        "narrative",
+        "③ 檢驗敘述",
+        "把檢驗結果寫成病人看得懂的段落。這是報告裡唯一未經逐句核准的文字。",
+        narrativeInput,
+        "rawNarrative",
+      ),
+      {
+        id: "assemble",
+        kind: "program",
+        title: "驗證與組裝",
+        role: "把模型的產出逐一比對來源數值、掃描禁止事項，通過的才組進報告；沒通過的就地標示，不改寫也不刪除。",
+        state: patientReport ? "ok" : "idle",
+        inputs: [],
+        outputs: [
+          { label: "病人版衛教報告", text: patientReport },
+          { label: "醫師版報告", text: clinicianReport },
+        ],
+        taken: patientReport ? ["正文逐字來自固定模組，模型不改寫"] : [],
+        problems: checks,
+      },
+    ];
+  }, [
+    rawInput,
+    llmText,
+    patientFacts,
+    preview,
+    selectorInput,
+    labInput,
+    narrativeInput,
+    callState,
+    callNotes,
+    rawOutputs,
+    patientReport,
+    clinicianReport,
+    checks,
+  ]);
+
+  const activeOutputTab = OUTPUT_TABS.find((item) => item.id === outputTab) ?? OUTPUT_TABS[0];
+  const output =
+    outputTab === "patient" ? patientReport : outputTab === "clinician" ? clinicianReport : (rawOutputs[outputTab] ?? "");
 
   return (
     <main className="workspace">
@@ -748,20 +951,16 @@ export default function Home() {
         <div className="stepBody">
           <div className="outputHeader">
             <div className="tabs">
-              <button
-                type="button"
-                className={outputTab === "patient" ? "active" : ""}
-                onClick={() => setOutputTab("patient")}
-              >
-                病人版衛教報告
-              </button>
-              <button
-                type="button"
-                className={outputTab === "clinician" ? "active" : ""}
-                onClick={() => setOutputTab("clinician")}
-              >
-                醫師版報告
-              </button>
+              {OUTPUT_TABS.map((item) => (
+                <button
+                  key={item.id}
+                  type="button"
+                  className={outputTab === item.id ? "active" : ""}
+                  onClick={() => setOutputTab(item.id)}
+                >
+                  {item.label}
+                </button>
+              ))}
             </div>
             <div className="outputActions">
               <span className="fieldNote">{output ? `${formatNumber(charCount(output))} 字` : "等待產出"}</span>
@@ -771,14 +970,21 @@ export default function Home() {
               <button
                 type="button"
                 className="miniButton"
-                onClick={() => downloadText(outputTab === "patient" ? "病人版衛教報告.txt" : "醫師版報告.txt", output)}
+                onClick={() => downloadText(activeOutputTab.filename, output)}
                 disabled={!output}
               >
                 下載 TXT
               </button>
             </div>
           </div>
-          <textarea className="outputEditor" value={output} readOnly spellCheck={false} placeholder="尚未產出。" />
+          <p className="fieldNote">{activeOutputTab.note}</p>
+          <textarea
+            className="outputEditor"
+            value={output}
+            readOnly
+            spellCheck={false}
+            placeholder={outputTab.startsWith("raw") ? "尚未呼叫，或該次呼叫失敗。" : "尚未產出。"}
+          />
         </div>
       </article>
 
@@ -786,26 +992,16 @@ export default function Home() {
         <div className="stepHeading">
           <span className="stepNumber">04</span>
           <div className="stepHeadingText">
-            <p className="eyebrow">PROMPTS</p>
-            <h2>三次呼叫送出的 system prompt</h2>
-            <p className="fieldNote">唯讀。這三個 prompt 由程式定義並隨版本一起送審，不在頁面上編輯。</p>
+            <p className="eyebrow">PIPELINE</p>
+            <h2>管線的每一站</h2>
+            <p className="fieldNote">
+              每一站點開就看得到餵進去什麼、吐出什麼，以及程式從中採用了哪些、丟掉哪些。
+              system prompt 由程式定義並隨版本一起送審，不在頁面上編輯。
+            </p>
           </div>
         </div>
         <div className="stepBody">
-        <div className="tabs">
-          {PROMPTS.map((item) => (
-            <button
-              key={item.id}
-              type="button"
-              className={promptId === item.id ? "active" : ""}
-              onClick={() => setPromptId(item.id)}
-            >
-              {item.label}
-            </button>
-          ))}
-        </div>
-        <p className="fieldNote">{activePrompt.role}</p>
-        <textarea className="promptEditor" value={activePrompt.text} readOnly spellCheck={false} />
+          <Pipeline stations={stations} />
         </div>
       </article>
 

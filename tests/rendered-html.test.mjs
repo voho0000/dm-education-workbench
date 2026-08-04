@@ -47,9 +47,13 @@ test("首頁畫出實際的資料流：程式判定為主，三次 LLM 呼叫", 
   assert.match(html, /病人版衛教報告/);
   assert.match(html, /醫師版報告/);
 
-  // 三個 prompt 必須看得到，而且是唯讀的
-  assert.match(html, /三次呼叫送出的 system prompt/);
-  assert.match(html, /由程式定義並隨版本一起送審，不在頁面上編輯/);
+  // 管線每一站都要看得到，包含餵進去什麼、程式採用了什麼
+  assert.match(html, /管線的每一站/);
+  assert.match(html, /system prompt 由程式定義並隨版本一起送審，不在頁面上編輯/);
+  assert.match(html, /讀取申報 JSON/);
+  assert.match(html, /確定性判定/);
+  assert.match(html, /驗證與組裝/);
+  assert.match(html, /原始回應（未解析）/);
 });
 
 test("三份固定內容攤在頁面上，逐條看得到，且標明未核准", async () => {
