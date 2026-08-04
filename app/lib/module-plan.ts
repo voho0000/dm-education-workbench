@@ -660,7 +660,7 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
       });
       lines.push("");
     }
-    const missing = plan.missingByModule[id];
+    const missing = inlineValues ? plan.missingByModule[id] : undefined;
     if (missing?.length) {
       lines.push(`您的資料中沒有${missing.join("、")}的紀錄。回診時可以確認是否需要安排。`, "");
     }

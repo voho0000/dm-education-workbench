@@ -234,6 +234,28 @@ export function analyteForItemName(name: string, unit?: string | null): Analyte 
   return null;
 }
 
+/**
+ * 糖尿病照護該有、但這位病人的紀錄中完全沒有出現的核心指標。
+ *
+ * 敘述器只讀得到存在的紀錄，沒有紀錄的東西對它來說不存在。缺檢和異常
+ * 一樣值得病人知道（一位病人完全沒有糖化血色素），所以由程式算出來
+ * 餵給它，讓它寫進同一段裡，而不是在別處另外印一行。
+ */
+const CORE_ANALYTES: Array<[Analyte, string]> = [
+  ["HbA1c", "糖化血色素（HbA1c）"],
+  ["eGFR", "腎絲球過濾率（eGFR）"],
+  ["UACR", "尿液白蛋白／肌酸酐比值（UACR）"],
+  ["creatinine", "血清肌酸酐"],
+  ["LDL-C", "低密度脂蛋白膽固醇"],
+  ["HDL-C", "高密度脂蛋白膽固醇"],
+  ["triglyceride", "三酸甘油酯"],
+];
+
+export function missingCoreAnalytes(findings: AnalyteFinding[]): string[] {
+  const present = new Set(findings.map((item) => item.analyte));
+  return CORE_ANALYTES.filter(([analyte]) => !present.has(analyte)).map(([, label]) => label);
+}
+
 export function extractLabFindings(facts: PatientFacts): AnalyteFinding[] {
   const byAnalyte = new Map<Analyte, AnalyteFinding>();
 

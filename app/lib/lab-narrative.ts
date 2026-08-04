@@ -22,7 +22,9 @@ import type { PatientFacts } from "./patient-facts.ts";
 
 export const LAB_NARRATIVE_PROMPT = `你要為一位第 2 型糖尿病人寫「檢驗數值」這一段衛教內容，讀者是病人本人，不是醫療人員。
 
-輸入分兩部分：先是這位病人的基本資料（含性別 gender 與生日 birthday），接著是健保申報檢驗紀錄原文。輸入不含用藥資料，不要推測或提及任何藥物。
+輸入分三部分：這位病人的基本資料（含性別 gender 與生日 birthday）、健保申報檢驗紀錄原文、以及一份程式初步判定「可能完全沒有紀錄」的核心指標清單。輸入不含用藥資料，不要推測或提及任何藥物。
+
+**那份清單是待你核對的假設，不是事實。** 它是程式用項目名稱比對出來的，而各院的名稱寫法差很多（同一個檢驗可能寫成 Glu-AC、GLU_AC 或血液及體液葡萄糖），程式曾經因此整批漏抓。請你自己在紀錄裡找一遍：確實找不到的才寫進文中；若你在紀錄裡找到了，就不要說它沒做，並把它列進 found_after_all。
 
 寫作原則：
 - 依生理系統分段，例如血糖、腎臟、血液、電解質。同一段裡把相關的數值串起來講，不要一項一句。
@@ -30,7 +32,8 @@ export const LAB_NARRATIVE_PROMPT = `你要為一位第 2 型糖尿病人寫「�
 - 只反映某一次急性事件當下狀態的項目不要寫：白血球與白血球分類、發炎指標、細菌培養、血液氣體與酸鹼、凝血功能。這批紀錄沒有採檢日期，寫了會讓人誤以為是目前狀態。
 - 參考值若依年齡或性別分層，依基本資料算出本人的年齡層與性別，取對應的那一段判讀。
 - 用一般人看得懂的話。醫學縮寫第一次出現時用中文說明。
-- 若糖化血色素、腎功能、尿液白蛋白這類糖尿病核心指標在紀錄中完全沒有出現，要指出來，並說明那是評估什麼用的。缺檢和異常一樣值得病人知道。
+- 經你核對後確實找不到的核心指標，每一項都要在文中提到，說明那是評估什麼用的、以及可以在回診時確認是否需要安排。缺檢和異常一樣值得病人知道。
+- 清單以外的項目不要說「沒有做」——你只需要核對清單上那幾項。
 - 不要寫開場白或結語，只寫這一段本身。
 
 嚴格禁止：
@@ -46,11 +49,22 @@ export const LAB_NARRATIVE_PROMPT = `你要為一位第 2 型糖尿病人寫「�
   "narrative": "整段內容，段落之間用 \\n\\n 分隔",
   "cited_values": [
     { "item": "項目名稱，逐字照抄來源", "value": "你在文中引用的數值，逐字照抄" }
+  ],
+  "found_after_all": [
+    { "item": "程式說沒有、但你在紀錄中找到的核心指標", "as": "它在紀錄中實際的項目名稱" }
   ]
 }`;
 
 export type LabNarrativeCheck = {
   narrative: string;
+  /**
+   * 程式判定為缺檢、但敘述器在原始紀錄中找到的項目。
+   *
+   * 這是給我們看的訊號，不是給病人的：出現任何一筆就代表項目名稱比對有漏，
+   * 而那個漏會同時影響門檻判定與模組觸發。實測就發生過 63 筆 Glu-AC 漏抓，
+   * 導致報告寫「最低 68」而真正的最低是 20 mg/dL。
+   */
+  foundAfterAll: Array<{ item: string; as: string }>;
   /** 引用了來源中找不到的數值 */
   unverifiedValues: Array<{ item: string; value: string }>;
   /** 文中出現但沒有列進 cited_values 的數字 */
@@ -144,7 +158,12 @@ export function parseLabNarrative(raw: string, facts: PatientFacts): LabNarrativ
 
   const bannedPhrases = BANNED.filter((rule) => rule.pattern.test(narrative)).map((rule) => rule.label);
 
-  return { narrative, unverifiedValues, uncitedNumbers, bannedPhrases };
+  const foundAfterAll = (Array.isArray(record.found_after_all) ? record.found_after_all : [])
+    .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+    .map((item) => ({ item: String(item.item ?? "").trim(), as: String(item.as ?? "").trim() }))
+    .filter((item) => item.item);
+
+  return { narrative, foundAfterAll, unverifiedValues, uncitedNumbers, bannedPhrases };
 }
 
 /** 病人版渲染。檢查不通過的部分會被標示出來，但文字本身不改寫。 */
@@ -159,6 +178,11 @@ export function formatLabNarrative(check: LabNarrativeCheck): string[] {
   }
   if (check.bannedPhrases.length) {
     problems.push(`可能踩到禁止事項：${check.bannedPhrases.join("、")}`);
+  }
+  if (check.foundAfterAll.length) {
+    problems.push(
+      `程式判定為缺檢但實際存在：${check.foundAfterAll.map((v) => `${v.item}（紀錄中寫作 ${v.as}）`).join("、")}——項目名稱比對有漏，需修正`,
+    );
   }
   if (problems.length) {
     lines.push("", `⚠ 這一段未通過自動檢查，不可直接提供給病人：${problems.join("；")}`);

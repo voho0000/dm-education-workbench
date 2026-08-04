@@ -31,6 +31,7 @@ import {
 import { GUIDELINE_RULES, formatRules, RULES_VERSION } from "../app/lib/guideline-rules.ts";
 import { LAB_REVIEW_PROMPT, labSectionOf, parseLabReview } from "../app/lib/lab-llm.ts";
 import { LAB_NARRATIVE_PROMPT, parseLabNarrative } from "../app/lib/lab-narrative.ts";
+import { extractLabFindings, missingCoreAnalytes } from "../app/lib/lab-findings.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
 
 function parseArgs(argv) {
@@ -131,9 +132,16 @@ for (const name of names) {
     `${LAB_REVIEW_PROMPT}\n\n---\n\n${labSectionOf(llmText)}`,
     "utf8",
   );
+  const missingCore = missingCoreAnalytes(extractLabFindings(facts));
   await writeFile(
     path.join(dir, "06_檢驗敘述_LLM輸入.txt"),
-    `${LAB_NARRATIVE_PROMPT}\n\n---\n\n${labSectionOf(llmText)}`,
+    [
+      LAB_NARRATIVE_PROMPT,
+      "---",
+      labSectionOf(llmText),
+      "【紀錄中完全沒有出現的核心指標】",
+      missingCore.length ? missingCore.map((item) => `- ${item}`).join("\n") : "（無，核心指標都有紀錄）",
+    ].join("\n\n"),
     "utf8",
   );
 

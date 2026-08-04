@@ -2327,9 +2327,10 @@ test("有檢驗敘述時，草稿橫幅要標示它未經逐句核准", () => {
   assert.ok(!without.includes("由模型直接撰寫"));
 });
 
-test("有 LLM 敘述時，器官段落不再嵌入數值，但保留缺檢提示", () => {
+test("有 LLM 敘述時，檢驗相關內容全部集中在敘述段", () => {
   // 同一個 eGFR 在腎臟段落與檢驗敘述各講一次，是兩種語氣講同一件事。
-  // 缺檢提示要留——敘述器只描述存在的紀錄，不知道「該有而沒有」。
+  // 缺檢也一樣——程式把候選清單餵給敘述器，由它核對後寫進同一段，
+  // 器官段落不再另外印一行。
   const facts = extractPatientFacts({
     userInfo: { gender: "M" },
     userInput: { REPORT_DATE: "2026-07-23", R3: 2 },
@@ -2353,10 +2354,34 @@ test("有 LLM 敘述時，器官段落不再嵌入數值，但保留缺檢提示
     ),
   });
   assert.ok(!withNarrative.includes("您的腎臟相關數值："), "有敘述時不再嵌入，避免同一個數值講兩次");
-  assert.match(withNarrative, /您的資料中沒有.*UACR.*的紀錄/, "缺檢提示要保留");
+  assert.ok(!withNarrative.includes("回診時可以確認是否需要安排。"), "缺檢也交給敘述器，不在器官段落另外印");
   assert.equal((withNarrative.match(/43\.3/g) ?? []).length, 1, "同一個數值只該出現一次");
 });
 
 test("敘述器要被要求指出完全沒有紀錄的核心指標", () => {
-  assert.match(LAB_NARRATIVE_PROMPT, /完全沒有出現，要指出來/);
+  // 清單是待核對的假設不是事實——程式的名稱比對曾整批漏抓
+  assert.match(LAB_NARRATIVE_PROMPT, /待你核對的假設，不是事實/);
+  assert.match(LAB_NARRATIVE_PROMPT, /found_after_all/);
+});
+
+test("敘述器回報「程式說沒有但其實有」時要被標記為程式的漏", () => {
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23" },
+    rawSources: {
+      labData: { rObject: [{ fee_ym: "202512", assay_item_name: "HbA1c 醣化血色素", assay_value: "8.1", unit_data: "%" }] },
+    },
+  });
+  const check = parseLabNarrative(
+    JSON.stringify({
+      narrative: "糖化血色素 8.1%。",
+      cited_values: [{ item: "HbA1c 醣化血色素", value: "8.1" }],
+      found_after_all: [{ item: "糖化血色素（HbA1c）", as: "HbA1c 醣化血色素" }],
+    }),
+    facts,
+  );
+  assert.equal(check.foundAfterAll.length, 1);
+  const rendered = formatLabNarrative(check).join("\n");
+  assert.match(rendered, /程式判定為缺檢但實際存在/);
+  assert.match(rendered, /項目名稱比對有漏，需修正/);
 });
