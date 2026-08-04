@@ -453,23 +453,25 @@ export default function Home() {
       </header>
 
       <section className="hero">
-        <p className="eyebrow">DIABETES EDUCATION REPORT</p>
-        <h1>
-          一份健保申報 JSON，
-          <br />
-          兩份可用的報告。
-        </h1>
-        <p className="heroLead">
-          併發症主題、個別化目標與追蹤間隔完全由程式依 R／PR 與指引門檻表判定；LLM 只負責規則做不到的三件事。
-          病人可見的衛教正文來自固定模組，不由模型改寫。
-        </p>
+        <div className="heroCopy">
+          <p className="eyebrow">DIABETES EDUCATION REPORT</p>
+          <h1>
+            一份健保申報 JSON，
+            <br />
+            兩份可用的報告。
+          </h1>
+          <p className="heroLead">
+            併發症主題、個別化目標與追蹤間隔完全由程式依 R／PR 與指引門檻表判定；LLM 只負責規則做不到的三件事。
+            病人可見的衛教正文來自固定模組，不由模型改寫。
+          </p>
+        </div>
         <FlowDiagram />
       </section>
 
       <article className="stepCard">
         <div className="stepHeading">
           <span className="stepNumber">01</span>
-          <div>
+          <div className="stepHeadingText">
             <p className="eyebrow">INPUT</p>
             <h2>病人資料</h2>
             <p className="fieldNote">
@@ -478,6 +480,7 @@ export default function Home() {
           </div>
         </div>
 
+        <div className="stepBody">
         <div className="inputGrid">
           <div
             className={dragging ? "dropZone dragging" : "dropZone"}
@@ -561,7 +564,7 @@ export default function Home() {
 
         {preview ? (
           <>
-            <div className="guidelineFacts">
+            <dl className="factGrid">
               <div>
                 <dt>已發生的併發症主題</dt>
                 <dd>{preview.decisions.filter((item) => item.kind === "established").length} 項</dd>
@@ -586,22 +589,24 @@ export default function Home() {
                 <dt>依指引推導的目標</dt>
                 <dd>{preview.targets.targets.filter((item) => item.value).length} 項</dd>
               </div>
-            </div>
+            </dl>
             <p className="fieldNote">以上完全由程式判定，不需要 API 金鑰，也不會因為換模型而改變。</p>
           </>
         ) : null}
+        </div>
       </article>
 
       <article className="stepCard generatorCard">
         <div className="stepHeading">
           <span className="stepNumber">02</span>
-          <div>
+          <div className="stepHeadingText">
             <p className="eyebrow">RUN</p>
             <h2>產出兩份報告</h2>
             <p className="fieldNote">按一次並行送出三個請求。金鑰只在執行時使用，不寫入本站。</p>
           </div>
         </div>
 
+        <div className="stepBody">
         <div className="settingsPane">
           <div className="credentialBox">
             <div className="credentialLabelRow">
@@ -722,19 +727,20 @@ export default function Home() {
             </button>
           ) : null}
         </div>
+        </div>
       </article>
 
       <article className="stepCard">
         <div className="stepHeading">
           <span className="stepNumber">03</span>
-          <div>
+          <div className="stepHeadingText">
             <p className="eyebrow">OUTPUT</p>
             <h2>兩份報告</h2>
             <p className="fieldNote">兩份由同一份判定組出，主題、目標與門檻一致。</p>
           </div>
         </div>
 
-        <div className="outputPane">
+        <div className="stepBody">
           <div className="outputHeader">
             <div className="tabs">
               <button
@@ -774,12 +780,13 @@ export default function Home() {
       <article className="stepCard">
         <div className="stepHeading">
           <span className="stepNumber">04</span>
-          <div>
+          <div className="stepHeadingText">
             <p className="eyebrow">PROMPTS</p>
             <h2>三次呼叫送出的 system prompt</h2>
             <p className="fieldNote">唯讀。這三個 prompt 由程式定義並隨版本一起送審，不在頁面上編輯。</p>
           </div>
         </div>
+        <div className="stepBody">
         <div className="tabs">
           {PROMPTS.map((item) => (
             <button
@@ -794,6 +801,7 @@ export default function Home() {
         </div>
         <p className="fieldNote">{activePrompt.role}</p>
         <textarea className="promptEditor" value={activePrompt.text} readOnly spellCheck={false} />
+        </div>
       </article>
 
       <section className="safetyNote">
