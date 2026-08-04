@@ -122,7 +122,12 @@ export function DecisionTrace({ plan, facts }: { plan: ResolvedPlan; facts: Pati
           <p className="traceEmpty">沒有可解出的目標。</p>
         )}
         {plan.targets.undetermined.length ? (
-          <p className="traceNote">資料不足、未判定：{plan.targets.undetermined.join("、")}</p>
+          <ul className="traceNoteList">
+            {/* 每一則本身就是完整句子（自帶句號），用頓號串起來會變成「。、」 */}
+            {plan.targets.undetermined.map((item, index) => (
+              <li key={index}>資料不足、未判定：{item}</li>
+            ))}
+          </ul>
         ) : null}
       </Stage>
 
