@@ -836,7 +836,7 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
     lines.push(`${section("依指引推導的個別化目標")}　來源：${RULES_SOURCE}`);
     for (const item of decided) {
       const rule = item.ruleId ? RULES_BY_ID.get(item.ruleId) : undefined;
-      lines.push(`  ${METRIC_LABEL[item.metric] ?? item.metric}：${item.value}${rule ? `　〔${citationShort(rule)}〕` : ""}`);
+      lines.push(`  ${METRIC_LABEL[item.metric] ?? item.metric}：${rule?.targetValue ?? item.value}${rule ? `　〔${citationShort(rule)}〕` : ""}`);
     }
     lines.push("");
   }

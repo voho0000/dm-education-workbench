@@ -42,6 +42,14 @@ export type GuidelineRule = {
    */
   patientFacing: boolean;
   /**
+   * 目標值本身，不重述指標名稱。
+   *
+   * 醫師版的目標清單已經把指標名稱放在冒號前面（LDL-C：、TG（三酸甘油酯）：），
+   * 若直接用 statement 就會變成「TG（三酸甘油酯）：三酸甘油酯目標為低於 150」，
+   * 同一個名字出現三次。statement 本身維持原文不改寫，這裡只是另一種呈現。
+   */
+  targetValue?: string;
+  /**
    * 給病人看的說法。statement 是要給醫師核對的事實陳述，
    * 有些會夾帶檢查技術名稱（單股纖維壓覺、128 Hz 音叉震動感），
    * 病人不需要知道也記不住。有這個欄位時病人版改用它。
@@ -53,6 +61,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   // ── 血糖目標 ──────────────────────────────────────────────
   {
     id: "hba1c-general",
+    targetValue: "低於 7.0%，並需個別化考量。",
     category: "glycemic-target",
     appliesTo: "一般成人",
     statement: "糖化血色素控制目標為低於 7.0%，並需個別化考量。",
@@ -61,6 +70,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "fpg-general",
+    targetValue: "80–130 mg/dL。",
     category: "glycemic-target",
     appliesTo: "一般成人",
     statement: "空腹血糖控制目標為 80–130 mg/dL。",
@@ -69,6 +79,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "ppg-general",
+    targetValue: "80–160 mg/dL。",
     category: "glycemic-target",
     appliesTo: "一般成人",
     statement: "餐後血糖控制目標為 80–160 mg/dL。",
@@ -77,6 +88,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "hba1c-elderly-healthy",
+    targetValue: "放寬為低於 7–7.5%。",
     category: "glycemic-target",
     appliesTo: "65 歲以上、共病少且認知與身體機能正常",
     statement: "糖化血色素目標放寬為低於 7–7.5%。",
@@ -85,6 +97,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "hba1c-elderly-intermediate",
+    targetValue: "放寬為低於 8.0%。",
     category: "glycemic-target",
     appliesTo: "65 歲以上、多種共病或認知與身體機能輕至中度異常",
     statement: "糖化血色素目標放寬為低於 8.0%。",
@@ -93,6 +106,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "hba1c-elderly-poor",
+    targetValue: "不以糖化血色素作為唯一控制目標，重點在避免低血糖與有症狀的高血糖。",
     category: "glycemic-target",
     appliesTo: "65 歲以上、末期慢性病或認知與身體機能中至重度異常",
     statement:
@@ -131,6 +145,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "bp-target-general",
+    targetValue: "140/90 mmHg 以下。",
     category: "bp-target",
     appliesTo: "一般糖尿病人",
     statement: "血壓控制在 140/90 mmHg 以下。",
@@ -139,6 +154,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "bp-target-intensive",
+    targetValue: "在病人可承受的情況下可進一步控制至 130/80 mmHg。",
     category: "bp-target",
     appliesTo: "可耐受且屬心血管或腦血管高危族群",
     statement: "在病人可承受的情況下可進一步控制至 130/80 mmHg。",
@@ -149,6 +165,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   // ── 血脂目標 ──────────────────────────────────────────────
   {
     id: "ldl-general",
+    targetValue: "低於 100 mg/dL。",
     category: "lipid-target",
     appliesTo: "所有糖尿病人",
     statement: "低密度脂蛋白膽固醇目標為低於 100 mg/dL。",
@@ -157,6 +174,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "ldl-cvd",
+    targetValue: "低於 70 mg/dL。",
     category: "lipid-target",
     appliesTo: "已有心血管疾病",
     statement: "低密度脂蛋白膽固醇目標為低於 70 mg/dL。",
@@ -165,6 +183,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "hdl-target",
+    targetValue: "男性高於 40 mg/dL、女性高於 50 mg/dL。",
     category: "lipid-target",
     appliesTo: "所有糖尿病人",
     statement: "高密度脂蛋白膽固醇目標為男性高於 40 mg/dL、女性高於 50 mg/dL。",
@@ -173,6 +192,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "tg-target",
+    targetValue: "低於 150 mg/dL；達到或超過 500 mg/dL 時需藥物處理。",
     category: "lipid-target",
     appliesTo: "所有糖尿病人",
     statement: "三酸甘油酯目標為低於 150 mg/dL；達到或超過 500 mg/dL 時需藥物處理。",

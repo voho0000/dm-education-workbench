@@ -1972,3 +1972,28 @@ test("醫師版的敘述句也用英文縮寫，不與清單相反", () => {
   assert.match(section, /HbA1c/);
   assert.match(section, /Glucose 曾出現/);
 });
+
+test("目標清單不重述指標名稱", () => {
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23", R5: 2 },
+    rawSources: {},
+  });
+  const report = assembleClinicianReport(resolvePlan(null, facts), facts, {
+    reportDate: "2026-08-04",
+    dataCutoff: null,
+  });
+  const section = report.slice(report.indexOf("依指引推導的個別化目標"), report.indexOf("需核實的檢驗結果"));
+  // 「TG（三酸甘油酯）：三酸甘油酯目標為低於 150」——同一個名字出現三次
+  for (const line of section.split("\n").filter((l) => /^\s{2}\S+：/.test(l))) {
+    const [head, body] = line.trim().split("：");
+    const zh = head.match(/（(.+)）/)?.[1] ?? head;
+    assert.ok(!body.includes(zh), `目標值不該重述指標名稱：${line.trim()}`);
+  }
+  assert.match(section, /TG（三酸甘油酯）：低於 150 mg\/dL/);
+  assert.match(section, /LDL-C：低於 70 mg\/dL/);
+
+  // 指引原文本身不得被改寫——它是要給醫師核對的事實陳述
+  const tg = GUIDELINE_RULES.find((r) => r.id === "tg-target");
+  assert.equal(tg.statement, "三酸甘油酯目標為低於 150 mg/dL；達到或超過 500 mg/dL 時需藥物處理。");
+});
