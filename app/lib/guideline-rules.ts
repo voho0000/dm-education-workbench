@@ -240,7 +240,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
     id: "interval-hba1c",
     category: "screening-interval",
     appliesTo: "糖尿病人",
-    statement: "糖化血色素與靜脈血漿血糖建議每 3 個月監測一次。",
+    statement: "糖化血色素與靜脈血漿葡萄糖建議每 3 個月監測一次。",
     citation: { table: "表九 臨床監測項目與建議頻率", pdfPage: 19 },
     patientFacing: true,
   },

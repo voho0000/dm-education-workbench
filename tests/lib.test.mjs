@@ -781,7 +781,7 @@ test("同一條指引規則不得在安全提示中出現兩次", () => {
   // 只看「需核實」這一節。追蹤間隔那一節也會列腎臟每半年，但那不是重複——
   // 一個是「這位病人的數值達到門檻」，一個是「排程該怎麼開」，少了後者排程表
   // 就沒有腎臟那一列。
-  const section = report.slice(report.indexOf("需核實的檢驗結果"), report.indexOf("依指引的追蹤間隔"));
+  const section = report.slice(report.indexOf("需核實的檢驗結果"), report.indexOf("、檢驗結果"));
   const halfYear = (section.match(/至少每半年監測追蹤一次/g) ?? []).length;
   assert.equal(halfYear, 1, "腎臟加密追蹤規則只能出現一次");
 
@@ -2014,7 +2014,7 @@ test("醫師版有依指引的追蹤間隔，且用事實陳述與出處", () =>
   });
   const plan = resolvePlan(null, facts);
   const clinician = assembleClinicianReport(plan, facts, { reportDate: "2026-08-04", dataCutoff: null });
-  const section = clinician.slice(clinician.indexOf("依指引的追蹤間隔"), clinician.indexOf("、檢驗結果"));
+  const section = clinician.slice(clinician.indexOf("依指引的追蹤間隔"), clinician.indexOf("需核實的檢驗結果"));
 
   assert.ok(plan.followUp.rules.length > 0);
   // 醫師版用原本的事實陳述（含檢查技術名稱），病人版才用白話說法

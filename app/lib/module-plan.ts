@@ -841,6 +841,14 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
     lines.push("");
   }
 
+  // 追蹤間隔是醫師要開單的依據，先前只出現在病人版，而且病人版用的是
+  // 白話說法（「每年做一次足部感覺檢查」）。醫師版用原本的事實陳述並附出處。
+  if (plan.followUp.rules.length) {
+    lines.push(section("依指引的追蹤間隔"));
+    lines.push(...followUpForClinician(plan.followUp.rules));
+    lines.push("");
+  }
+
   // 只保留病人特有的安全提示。申報資料的通則性限制（檢驗只有費用年月、申報用藥
   // 不等於目前用藥等）刻意不列——那些每份報告都一樣，醫師本來就知道，列了只是雜訊。
   const disagreements = plan.selection?.disagreements ?? [];
@@ -869,14 +877,6 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
       lines.push(`  [異議] ${item.topic}｜程式：${item.program_decision}`);
       lines.push(`    LLM：${item.your_view}`);
     }
-    lines.push("");
-  }
-
-  // 追蹤間隔是醫師要開單的依據，先前只出現在病人版，而且病人版用的是
-  // 白話說法（「每年做一次足部感覺檢查」）。醫師版用原本的事實陳述並附出處。
-  if (plan.followUp.rules.length) {
-    lines.push(section("依指引的追蹤間隔"));
-    lines.push(...followUpForClinician(plan.followUp.rules));
     lines.push("");
   }
 
