@@ -1,0 +1,62 @@
+# See https://help.github.com/articles/ignoring-files/ for more about ignoring files.
+
+# dependencies
+/node_modules
+/.pnp
+.pnp.*
+.yarn/*
+!.yarn/patches
+!.yarn/plugins
+!.yarn/releases
+!.yarn/versions
+
+# testing
+/coverage
+
+# next.js
+/.next/
+/.vinext/
+/out/
+
+# misc
+.DS_Store
+*.pem
+
+# debug
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+.pnpm-debug.log*
+
+# env files (can opt-in for committing if needed)
+.env*
+!.env.example
+
+# vercel
+.vercel
+
+# typescript
+next-env.d.ts
+/dist/
+/.wrangler/
+/outputs/
+/work/
+/github-pages/
+/tsconfig.tsbuildinfo
+
+# 病人資料與由它衍生的一切，一律不進版本控制
+/patients/
+*.patient.json
+**/lab.output.json
+**/C.output.json
+**/facts.json
+**/*病人*
+**/*衛教報告*
+**/*醫師版*
+**/*_LLM好讀版*
+**/*.eval/
+/evaluation/
+/reports/
+
+# 指引全文（原文標示未授權不得轉載）
+*指引*全文*.txt

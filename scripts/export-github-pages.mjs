@@ -1,0 +1,59 @@
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import path from "node:path";
+import process from "node:process";
+
+const outputDir = path.resolve(process.argv[2] ?? "github-pages/dm-education-report");
+const publicUrl = "https://voho0000.github.io/dm-education-report/";
+
+const workerUrl = new URL("../dist/server/index.js", import.meta.url);
+workerUrl.searchParams.set("static-export", `${Date.now()}`);
+const { default: worker } = await import(workerUrl.href);
+
+const response = await worker.fetch(
+  new Request("https://static-export.local/", { headers: { accept: "text/html" } }),
+  { ASSETS: { fetch: async () => new Response("Not found", { status: 404 }) } },
+  { waitUntil() {}, passThroughOnException() {} },
+);
+
+if (!response.ok) throw new Error(`首頁轉出失敗：HTTP ${response.status}`);
+
+let html = await response.text();
+html = html
+  .replaceAll('href="/assets/', 'href="./assets/')
+  .replaceAll('src="/assets/', 'src="./assets/')
+  .replaceAll('import("/assets/', 'import("./assets/')
+  .replaceAll('href="/favicon.svg"', 'href="./favicon.svg"')
+  .replaceAll('content="/og.png"', `content="${publicUrl}og.jpg"`)
+  .replaceAll('\\"/assets/', '\\"./assets/')
+  .replaceAll('\\"/favicon.svg\\"', '\\"./favicon.svg\\"')
+  .replaceAll('\\"/og.png\\"', `\\"${publicUrl}og.jpg\\"`);
+
+await rm(outputDir, { recursive: true, force: true });
+await mkdir(outputDir, { recursive: true });
+await cp(new URL("../dist/client/", import.meta.url), outputDir, { recursive: true });
+await Promise.all([
+  rm(path.join(outputDir, ".vite"), { recursive: true, force: true }),
+  rm(path.join(outputDir, "_headers"), { force: true }),
+  rm(path.join(outputDir, ".assetsignore"), { force: true }),
+  rm(path.join(outputDir, "assets", "_vinext_fonts"), { recursive: true, force: true }),
+  rm(path.join(outputDir, "og.png"), { force: true }),
+  rm(path.join(outputDir, "file.svg"), { force: true }),
+  rm(path.join(outputDir, "globe.svg"), { force: true }),
+  rm(path.join(outputDir, "window.svg"), { force: true }),
+]);
+await writeFile(path.join(outputDir, "index.html"), html, "utf8");
+
+const builtHtml = await readFile(path.join(outputDir, "index.html"), "utf8");
+for (const forbidden of [
+  'href="/assets/',
+  'src="/assets/',
+  'import("/assets/',
+  'content="/og.png"',
+  '\\"/assets/',
+  '\\"/favicon.svg\\"',
+  '\\"/og.png\\"',
+]) {
+  if (builtHtml.includes(forbidden)) throw new Error(`靜態頁仍包含根目錄路徑：${forbidden}`);
+}
+
+console.log(outputDir);

@@ -1,0 +1,912 @@
+/**
+ * arm C 的組裝層。
+ *
+ * 責任分配（這一版和上一版最大的差別）：
+ *
+ *   併發症主題要不要納入 → **程式**依 R／PR 判定，不由 LLM 決定。
+ *     上一版讓 LLM 依「R>0 或 PR 存在」選模組，結果五位病人幾乎都選滿六個主題，
+ *     個人化整個塌掉。原因不是模型選錯，是規則太寬。
+ *
+ *   LLM 只負責規則做不到的事：排出前三優先、指出資料中需要醫療團隊注意的地方，
+ *   以及對程式的判定提出不同意見（不同意見會被記錄，但不會覆寫程式判定）。
+ *
+ *   病人可見正文一律由程式以固定文字組合，LLM 不改寫、不補數值。
+ */
+
+import {
+  EDUCATION_MODULES,
+  MODULE_BY_ID,
+  MODULE_CATALOG_APPROVED,
+  MODULE_CATALOG_VERSION,
+} from "./education-modules.ts";
+import { SELF_CARE_BY_ID, SELF_CARE_VERSION, selectSelfCareModules } from "./self-care-modules.ts";
+import { RULES_VERSION, RULES_SOURCE, RULES_BY_ID, citationShort } from "./guideline-rules.ts";
+import { resolveTargets, type ResolvedPlanTargets } from "./resolve-targets.ts";
+import type { PatientFacts } from "./patient-facts.ts";
+import { SHARED_CARE_BLOCKS, followUpSchedule } from "./shared-care.ts";
+import {
+  describeRange,
+  describeRangeForClinician,
+  evaluateThresholds,
+  extractLabFindings,
+  lowestMeasuredGlucose,
+  type Analyte,
+} from "./lab-findings.ts";
+import { ANALYTE_TO_MODULE, compareToTargets, outOfTargetOnly } from "./target-comparison.ts";
+import { formatLabReview, type LabReviewCheck } from "./lab-llm.ts";
+
+/**
+ * PR 數值的極性——整個 arm C 的臨床意義都掛在這一個常數上，改錯會把每位病人的
+ * 風險判定整個反過來，因此把證據寫在這裡，並且只在這裡定義一次。
+ *
+ * 目前設定為 zero-is-high-risk（PR=0 為高風險），2026-08-04 確認。
+ *
+ * 證據一：來源系統的舊批次匯出同時給了數值與中文敘述，同一位病人
+ *   PR3=0、PR4=0、PR6=0，中文敘述為
+ *   「腎病變:高風險, 神經病變:高風險, 周邊血管病變:高風險」。
+ *   PR3／PR4／PR6 分別對應腎病變／神經病變／周邊血管病變。
+ *
+ * 證據二（內部一致性交叉驗證）：CKD 旗標與 PR3 的關係。
+ *   三位 CKD=1 的病人，PR3 全部是 0；唯一 PR3=2 的病人 CKD=0。
+ *   若 PR=0 代表低風險，等於風險模型對已有慢性腎臟病的人預測「腎病變低風險」，
+ *   對沒有 CKD 的人預測高風險，方向不合理。n 只有 3，不是定論，但與證據一同向。
+ *
+ * 曾經考慮過相反設定：v14 生成 prompt 雖然也寫「PR=0→積極照護，代表未來惡化
+ * 機率較高」，但 v14 本身已被發現多處錯誤，不能單獨作為規格依據。2026-08-04
+ * 一度依指示改為 zero-is-low-risk，在上述交叉驗證後改回。
+ *
+ * ⚠ 待辦：仍應向資料來源方或風險模型規格書取得書面確認並記錄於此。
+ * 這個常數決定每位病人的風險方向，設錯會讓高風險項目被整批排除。
+ */
+export const PR_POLARITY: "zero-is-high-risk" | "zero-is-low-risk" = "zero-is-high-risk";
+
+const ZERO_IS_HIGH = PR_POLARITY === "zero-is-high-risk";
+
+/** 風險最高、需要完整模組的 PR 值 */
+export const PR_HIGH = ZERO_IS_HIGH ? 0 : 2;
+/** 中等風險，只給簡短提醒 */
+export const PR_MODERATE = 1;
+/** 風險最低，不納入主題內容 */
+export const PR_LOW = ZERO_IS_HIGH ? 2 : 0;
+
+/** PR 分級用語。沿用 v14 已定義的三級，避免病人版出現「高／中／低風險」標籤。 */
+export const PR_ACTION_TIER: Record<number, string> = {
+  [PR_HIGH]: "積極照護",
+  [PR_MODERATE]: "適度介入",
+  [PR_LOW]: "日常維持",
+};
+
+const TOPIC_TO_MODULE: Record<number, string> = {
+  1: "EYE-CORE",
+  2: "STROKE-CORE",
+  3: "KIDNEY-CORE",
+  4: "NERVE-CORE",
+  5: "HEART-CORE",
+  6: "LEG-CIRCULATION-CORE",
+};
+
+const TOPIC_NAMES: Record<number, string> = {
+  1: "視網膜病變",
+  2: "腦血管疾病",
+  3: "腎臟病變",
+  4: "神經病變",
+  5: "心血管疾病",
+  6: "周邊血管疾病",
+  // 第 7 項沒有對應的衛教模組（來源也不提供 PR7），但主管機關要求現況必須呈現。
+  7: "代謝性急症",
+};
+
+export type TopicKind =
+  | "established"
+  | "prevention-active"
+  | "prevention-moderate"
+  | "excluded";
+
+export type TopicDecision = {
+  topic: number;
+  topicName: string;
+  moduleId: string;
+  kind: TopicKind;
+  rValue: number | null;
+  prValue: number | null;
+  reason: string;
+};
+
+/**
+ * 確定性的主題判定。
+ *
+ * 先講來源的資料模型，因為判定完全建立在它上面：
+ * **同一個主題，R 與 PR 只會出現其中一個。** 已發生的併發症輸出 R（值恆 ≥1），
+ * 尚未發生的才輸出 PR 風險預測。實測六位病人 × 7 個主題共 42 個位置，
+ * 兩者同時出現的次數是 0，恰有其一的是 37（其餘 5 個是 R7/PR7，
+ * 因為來源只提供 PR1–PR6，沒有 PR7）。
+ *
+ * 所以「R 缺值 + PR 存在」不是資訊不明，而是**該併發症尚未發生**——
+ * 正因為沒發生，模型才會為它產生風險預測。
+ *
+ *   R 存在（恆 >0）            → 已發生，完整模組
+ *   R 缺值、PR 為高風險        → 尚未發生，完整模組（預防內容）
+ *   R 缺值、PR 為中風險        → 尚未發生，只給簡短提醒
+ *   R 缺值、PR 為低風險        → 不納入
+ *   R 與 PR 皆缺               → 真的無從判斷，不納入
+ *
+ * 另外：來源的 CKD 欄位若為 1，代表已有慢性腎臟病，即使 R3 缺值也要以
+ * 已發生處理，否則會對 CKD 病人說「腎臟尚未受影響」。
+ */
+export function decideTopics(facts: PatientFacts): TopicDecision[] {
+  const decisions: TopicDecision[] = [];
+  const ckdFlag = facts.comorbidityFlags.ckd;
+  const hasCkdFlag = ckdFlag.known && ckdFlag.value;
+
+  for (let topic = 1; topic <= 6; topic += 1) {
+    const r = facts.existingComplications.find((item) => item.code === `R${topic}`);
+    const pr = facts.riskPredictions.find((item) => item.code === `PR${topic}`);
+    const rPresent = Boolean(r?.present);
+    const rValue = rPresent ? (r?.value ?? null) : null;
+    const prValue = pr?.present ? pr.value : null;
+    const base = {
+      topic,
+      topicName: TOPIC_NAMES[topic],
+      moduleId: TOPIC_TO_MODULE[topic],
+      rValue,
+      prValue,
+    };
+
+    if (rValue !== null && rValue > 0) {
+      decisions.push({ ...base, kind: "established", reason: `R${topic}=${rValue}，屬已發生的併發症現況。` });
+      continue;
+    }
+
+    // 來源 CKD 欄位是獨立於 DCSI 的既有診斷宣告，優先於 R3 的缺值。
+    if (topic === 3 && hasCkdFlag) {
+      decisions.push({
+        ...base,
+        kind: "established",
+        reason: `來源 CKD 欄位為 1（已有慢性腎臟病），即使 R3${rPresent ? `=${rValue}` : " 缺值"} 也以已發生處理。`,
+      });
+      continue;
+    }
+
+    // 走到這裡代表 R 不存在或為 0（R>0 已在上面判為已發生），兩種情形都是尚未發生。
+    if (prValue === PR_HIGH) {
+      decisions.push({
+        ...base,
+        kind: "prevention-active",
+        reason: `來源以 PR${topic}=${PR_HIGH}（${PR_ACTION_TIER[PR_HIGH]}）呈現、未輸出 R${topic}，依資料模型代表尚未發生；納入預防內容。`,
+      });
+      continue;
+    }
+    if (prValue === PR_MODERATE) {
+      decisions.push({
+        ...base,
+        kind: "prevention-moderate",
+        reason: `PR${topic}=${PR_MODERATE}（${PR_ACTION_TIER[PR_MODERATE]}），尚未發生；以簡短提醒呈現，不展開完整模組。`,
+      });
+      continue;
+    }
+    if (prValue === PR_LOW) {
+      decisions.push({
+        ...base,
+        kind: "excluded",
+        reason: `PR${topic}=${PR_LOW}（${PR_ACTION_TIER[PR_LOW]}），維持既有照護即可，不納入主題內容。`,
+      });
+      continue;
+    }
+    decisions.push({
+      ...base,
+      kind: "excluded",
+      reason: `來源同時未提供 R${topic} 與 PR${topic}，無從判斷是否發生，不得補值，因此不納入。`,
+    });
+  }
+
+  return decisions;
+}
+
+export const MODULE_SELECTOR_PROMPT = `你是糖尿病衛教報告的輔助判讀器。
+
+重要：哪些併發症主題要納入報告，**已經由程式依 R 與 PR 欄位判定完成**，你不需要也不能改變它。病人可見的衛教正文也全部由程式以已核准的固定文字組合，你寫的任何文字都不會出現在病人版報告中。
+
+你只負責三件規則做不到的事：
+
+1. 排出這位病人最該優先處理的前三項，並說明理由。可以從程式已納入的模組中挑選。
+2. 指出資料中需要醫療團隊注意的地方，例如用藥分類與檢驗結果之間的疑慮、資料明顯矛盾、或缺少關鍵資訊。
+3. 如果你認為程式的主題判定有問題，寫在 disagreements。你的意見會被記錄下來供人工檢視，但不會覆寫程式判定。
+
+限制：
+- 不得推測資料沒有的診斷、檢驗、日期或目前用藥。
+- 申報用藥只代表曾有申報紀錄，不得當成目前正在使用。
+- 不得提出停藥、加藥、換藥或調整劑量的建議。
+- 來源未出現的欄位不得視為 0。
+
+輸出格式：只輸出一個 JSON 物件，不要加說明文字或程式碼圍籬。
+
+{
+  "priorities": [
+    { "module_id": "已納入的模組代碼", "why": "為什麼這位病人該優先處理這一項" }
+  ],
+  "clinician_notes": ["給醫療團隊的提醒，每則 80 字以內"],
+  "data_concerns": ["資料品質或矛盾之處"],
+  "disagreements": [
+    { "topic": "R3", "program_decision": "程式的判定", "your_view": "你的看法與理由" }
+  ]
+}`;
+
+export type SelectorOutput = {
+  priorities: Array<{ module_id: string; why: string }>;
+  clinician_notes: string[];
+  data_concerns: string[];
+  disagreements: Array<{ topic: string; program_decision: string; your_view: string }>;
+};
+
+export function parseModuleSelection(raw: string): SelectorOutput {
+  const trimmed = raw.trim();
+  const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
+  const candidate = fenced ? fenced[1].trim() : trimmed;
+
+  let parsed: unknown;
+  try {
+    parsed = JSON.parse(candidate);
+  } catch {
+    const first = candidate.indexOf("{");
+    const last = candidate.lastIndexOf("}");
+    if (first === -1 || last <= first) throw new Error("輔助判讀器沒有回傳可解析的 JSON。");
+    parsed = JSON.parse(candidate.slice(first, last + 1));
+  }
+  if (!parsed || typeof parsed !== "object") throw new Error("輔助判讀器回傳的不是 JSON 物件。");
+  const record = parsed as Record<string, unknown>;
+
+  const strings = (value: unknown): string[] =>
+    Array.isArray(value) ? value.filter((item) => typeof item === "string").map(String) : [];
+
+  return {
+    priorities: (Array.isArray(record.priorities) ? record.priorities : [])
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+      .map((item) => ({ module_id: String(item.module_id ?? "").trim(), why: String(item.why ?? "").trim() }))
+      .filter((item) => item.module_id),
+    clinician_notes: strings(record.clinician_notes),
+    data_concerns: strings(record.data_concerns),
+    disagreements: (Array.isArray(record.disagreements) ? record.disagreements : [])
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+      .map((item) => ({
+        topic: String(item.topic ?? "").trim(),
+        program_decision: String(item.program_decision ?? "").trim(),
+        your_view: String(item.your_view ?? "").trim(),
+      }))
+      .filter((item) => item.topic),
+  };
+}
+
+export type ResolvedPlan = {
+  decisions: TopicDecision[];
+  /** 完整展開的併發症主題模組，已排序 */
+  topicModuleIds: string[];
+  /** 只給簡短提醒的主題 */
+  moderateTopics: TopicDecision[];
+  selfCareModuleIds: string[];
+  selfCareReasons: Record<string, string>;
+  /** 病人版最終順序（含 BASE 與類型提醒） */
+  patientModuleIds: string[];
+  targets: ResolvedPlanTargets;
+  selection: SelectorOutput | null;
+  /** LLM 指定但不在已納入清單中的優先項，已被忽略 */
+  rejectedPriorities: string[];
+  /** 病人版可讀的檢驗數值敘述（不含時序宣稱、不含筆數） */
+  labNotes: string[];
+  /** 醫師版：含筆數與結果種類數 */
+  labNotesForClinician: string[];
+  /** 由實際數值觸發、可給病人看的門檻提醒 */
+  labPatientMessages: string[];
+  /** 文末數值，每一則帶著它自己的說明，讓病人不必自行配對。 */
+  labNoteEntries: Array<{ text: string; messages: string[] }>;
+  /** 由實際數值觸發、給醫師看的門檻判定（含數值與出處） */
+  labThresholds: ReturnType<typeof evaluateThresholds>;
+  /** 共同照護區塊，整份報告各出現一次 */
+  sharedBlockIds: string[];
+  followUp: ReturnType<typeof followUpSchedule>;
+  /** 各主題的就醫警訊，集中成單一清單 */
+  urgentSigns: string[];
+  /** 目標值與實際檢驗值的逐項比對 */
+  targetComparisons: ReturnType<typeof compareToTargets>;
+  /** 模組代碼 → 該器官相關的檢驗值敘述，用來嵌進對應段落 */
+  labByModule: Record<string, string[]>;
+  /** 同上，但每一則帶著它自己的說明。 */
+  labEntriesByModule: Record<string, Array<{ text: string; messages: string[] }>>;
+  /** 該器官段落建議的檢查項目中，資料裡完全沒有紀錄的那些。 */
+  missingByModule: Record<string, string[]>;
+  /** 用藥與檢驗資料的時間落差（天）；無法計算時為 null */
+  medicationLabGapDays: number | null;
+  /** 已納入門檻判定的指標數 */
+  evaluatedAnalytes: number;
+  /** 已由程式逐條判定的檢驗項目，供判讀器那一段去重 */
+  evaluatedAnalyteKeys: string[];
+  /** 有數值但未納入判定的檢驗項目種類數 */
+  unevaluatedNumericItems: number;
+};
+
+export function resolvePlan(selection: SelectorOutput | null, facts: PatientFacts): ResolvedPlan {
+  const decisions = decideTopics(facts);
+
+  const established = decisions
+    .filter((item) => item.kind === "established")
+    .sort((a, b) => (b.rValue ?? 0) - (a.rValue ?? 0) || a.topic - b.topic);
+  const active = decisions
+    .filter((item) => item.kind === "prevention-active")
+    .sort((a, b) => a.topic - b.topic);
+  const moderate = decisions.filter((item) => item.kind === "prevention-moderate").sort((a, b) => a.topic - b.topic);
+
+  // 分型專屬補充模組只有在糖尿病類型明確確認時才附加，且必須跟在對應的 CORE 之後。
+  const typeSuffix =
+    facts.diabetesType.verdict === "type1-confirmed"
+      ? "T1"
+      : facts.diabetesType.verdict === "type2-confirmed"
+        ? "T2"
+        : null;
+  const TYPE_VARIANTS: Record<string, string> = {
+    "EYE-CORE": "EYE",
+    "KIDNEY-CORE": "KIDNEY",
+    "NERVE-CORE": "NERVE",
+  };
+
+  const topicModuleIds: string[] = [];
+  for (const item of [...established, ...active]) {
+    topicModuleIds.push(item.moduleId);
+    const prefix = TYPE_VARIANTS[item.moduleId];
+    if (typeSuffix && prefix && MODULE_BY_ID.has(`${prefix}-${typeSuffix}`)) {
+      topicModuleIds.push(`${prefix}-${typeSuffix}`);
+    }
+  }
+
+  const patientModuleIds: string[] = ["BASE-01"];
+  const verdict = facts.diabetesType.verdict;
+  if (verdict === "conflicting" || verdict === "absent") patientModuleIds.push("TYPE-UNCLEAR");
+  patientModuleIds.push(...topicModuleIds);
+  if (topicModuleIds.includes("NERVE-CORE") || topicModuleIds.includes("LEG-CIRCULATION-CORE")) {
+    patientModuleIds.push("BASE-02");
+  }
+
+  // 檢驗數值：接進門檻判定。沒有採檢日，所以一律以「曾出現」敘述。
+  const labFindings = extractLabFindings(facts);
+  const labThresholds = evaluateThresholds(labFindings, facts);
+
+  // 計數只有一個來源：主題判定。低血糖模組要看實測值，所以檢驗判定必須先跑。
+  const lowestGlucose = lowestMeasuredGlucose(labFindings);
+  const selfCare = selectSelfCareModules(facts, established.length, lowestGlucose);
+
+  // 簡短提醒的主題雖然沒有展開完整模組，仍然出現在報告中，因此也算有效的優先項。
+  const includedIds = new Set([
+    ...patientModuleIds,
+    ...selfCare.moduleIds,
+    ...moderate.map((item) => item.moduleId),
+  ]);
+  const rejectedPriorities = (selection?.priorities ?? [])
+    .map((item) => item.module_id)
+    .filter((id) => !includedIds.has(id));
+
+
+  // 共同照護區塊：由選到的主題決定，整份報告各出現一次。
+  const needed = new Set<string>();
+  for (const id of topicModuleIds) {
+    for (const key of MODULE_BY_ID.get(id)?.needsShared ?? []) needed.add(key);
+  }
+  const sharedBlockIds = SHARED_CARE_BLOCKS.filter(
+    (block) => block.appliesWhen === "always" || needed.has(block.appliesWhen),
+  ).map((block) => block.id);
+
+  // 就醫警訊集中；同一份報告裡不重複。
+  const urgentSigns: string[] = [];
+  for (const id of topicModuleIds) {
+    const signs = MODULE_BY_ID.get(id)?.urgentSigns;
+    if (signs && !urgentSigns.includes(signs)) urgentSigns.push(signs);
+  }
+  for (const id of selfCare.moduleIds) {
+    const signs = SELF_CARE_BY_ID.get(id)?.urgentSigns;
+    if (signs && !urgentSigns.includes(signs)) urgentSigns.push(signs);
+  }
+
+  const includedTopics = [...established, ...active].map((item) => item.topic);
+  const targetComparisons = compareToTargets(labFindings, facts);
+
+  // 把檢驗值嵌進對應的器官段落。稽核指出數值全放在文末附錄時，
+  // 病人必須自己把「數值」和「建議」兩段對照，等於把工作丟回去。
+  const labByModule: Record<string, string[]> = {};
+  const labEntriesByModule: Record<string, Array<{ text: string; messages: string[] }>> = {};
+  const inlined = new Set<string>();
+  for (const finding of labFindings) {
+    const moduleId = ANALYTE_TO_MODULE[finding.analyte];
+    if (!moduleId || !topicModuleIds.includes(moduleId)) continue;
+    const text = describeRange(finding);
+    (labByModule[moduleId] ??= []).push(text);
+    (labEntriesByModule[moduleId] ??= []).push({
+      text,
+      messages: labThresholds
+        .filter((hit) => hit.analyte === finding.analyte && hit.patientMessage)
+        .map((hit) => hit.patientMessage as string),
+    });
+    inlined.add(finding.analyte);
+  }
+
+  // 段落裡教了要看哪些檢查，就要說明哪一項資料中完全沒有——
+  // 否則會出現「說您有腎臟問題、只給一個正常的肌酸酐」這種讀不通的組合。
+  const missingByModule: Record<string, string[]> = {};
+  const measured = new Set(labFindings.map((item) => item.analyte));
+  for (const [moduleId, expected] of Object.entries(EXPECTED_ANALYTES)) {
+    if (!topicModuleIds.includes(moduleId)) continue;
+    const missing = expected.filter((item) => !measured.has(item.analyte)).map((item) => item.label);
+    if (missing.length) missingByModule[moduleId] = missing;
+  }
+
+  // 用藥申報停在兩年前、檢驗卻是近月，這種落差醫師需要知道。
+  let medicationLabGapDays: number | null = null;
+  if (facts.medicationDateRange.known && facts.reportDate.known) {
+    const latest = Date.parse(`${facts.medicationDateRange.value.latest}T00:00:00Z`);
+    const report = Date.parse(`${facts.reportDate.value}T00:00:00Z`);
+    if (Number.isFinite(latest) && Number.isFinite(report)) {
+      medicationLabGapDays = Math.round((report - latest) / 86_400_000);
+    }
+  }
+
+  return {
+    decisions,
+    topicModuleIds,
+    moderateTopics: moderate,
+    selfCareModuleIds: selfCare.moduleIds,
+    selfCareReasons: selfCare.reasons,
+    patientModuleIds,
+    targets: resolveTargets(facts, established.length),
+    selection,
+    rejectedPriorities,
+    // 已經嵌進器官段落的就不在文末摘要重複一次。
+    labNotes: labFindings.filter((f) => !inlined.has(f.analyte)).map(describeRange),
+    labNotesForClinician: labFindings.map(describeRangeForClinician),
+    labPatientMessages: labThresholds
+      .map((hit) => hit.patientMessage)
+      .filter((message): message is string => Boolean(message)),
+    // 輕重之分靠排序表達，不靠在前面加一個摘要區塊。
+    // 摘要區塊只會列出「血鈉異常」這種病人看不懂又無從行動的臨床名詞，
+    // 而且緊接著的資料限制說明會立刻否定它。
+    labNoteEntries: labFindings
+      .filter((f) => !inlined.has(f.analyte))
+      .map((f) => {
+        const hits = labThresholds.filter((hit) => hit.analyte === f.analyte && hit.patientMessage);
+        return {
+          text: describeRange(f),
+          messages: hits.map((hit) => hit.patientMessage as string),
+          rank: hits.some((hit) => hit.severity === "urgent") ? 0 : hits.length ? 1 : 2,
+        };
+      })
+      .sort((a, b) => a.rank - b.rank)
+      .map(({ text, messages }) => ({ text, messages })),
+    labThresholds,
+    sharedBlockIds,
+    targetComparisons,
+    labByModule,
+    labEntriesByModule,
+    missingByModule,
+    medicationLabGapDays,
+    evaluatedAnalytes: labFindings.length,
+    evaluatedAnalyteKeys: labFindings.map((item) => item.analyte),
+    unevaluatedNumericItems: facts.labItems.filter(
+      (item) => item.rawValues.some((v) => /^[≧≥><＞＜]?\s*\d/.test(v.trim())),
+    ).length - labFindings.length,
+    followUp: followUpSchedule(includedTopics, {
+      kidneyIntensive: labThresholds.some((hit) => hit.code === "kidney-intensive-followup"),
+    }),
+    urgentSigns,
+  };
+}
+
+function draftBanner(): string[] {
+  if (MODULE_CATALOG_APPROVED) return [];
+  return [
+    `※ DRAFT｜衛教模組 ${MODULE_CATALOG_VERSION}／自我照護模組 ${SELF_CARE_VERSION}／指引門檻表 ${RULES_VERSION} 均尚未經醫療團隊核准，僅供流程比較，不得提供給病人。`,
+    "",
+  ];
+}
+
+/**
+ * 中風險主題的一句話提醒。
+ *
+ * 先前這一區只印病名，讀者拿到「1. 腦血管疾病 2. 心血管疾病」加一句免責聲明——
+ * 製造焦慮又不給出路。列出一個項目就要能回答「那我該做什麼」。
+ */
+/**
+ * 各器官段落「應該要有」的檢查項目。資料中完全沒有紀錄時要講出來，
+ * 因為那本身就是一件病人可以在回診時處理的事。
+ */
+const EXPECTED_ANALYTES: Record<string, Array<{ analyte: Analyte; label: string }>> = {
+  "KIDNEY-CORE": [
+    { analyte: "UACR", label: "尿液白蛋白／肌酸酐比值（UACR）" },
+    { analyte: "creatinine", label: "血清肌酸酐" },
+    { analyte: "eGFR", label: "腎絲球過濾率（eGFR）" },
+  ],
+};
+
+const MODERATE_ACTION: Record<number, string> = {
+  1: "維持每年一次的眼底檢查，視力有變化時提早回診。",
+  2: "維持血壓與血脂的追蹤；出現單側無力、口齒不清或臉歪時立即撥打 119。",
+  3: "維持每年一次的尿液白蛋白與腎功能檢查。",
+  4: "每天看一次雙腳；出現麻、刺痛或感覺變鈍時回診時提出。",
+  5: "維持血壓與血脂的追蹤；活動時胸悶或明顯喘要就醫評估。",
+  6: "留意走路時小腿是否痠痛、休息後是否改善，並維持每年一次的足部循環檢查。",
+};
+
+
+export type AssembleOptions = {
+  /**
+   * 這份報告實際產出的日期，由呼叫端給（通常是今天）。
+   *
+   * 不可用來源的 REPORT_DATE 代替。那是資料匯出當時的日期，會讓一份今天
+   * 產出的報告顯示成十幾天前做的，而病人版還要讀者「請先查看資料截至日期」——
+   * 兩個日期一樣就等於沒有給任何資訊。
+   */
+  reportDate: string | null;
+  /** 資料的截止日，來自來源的 REPORT_DATE。 */
+  dataCutoff: string | null;
+  /** 檢驗判讀器的輸出；未執行時省略。只影響醫師版。 */
+  labReview?: LabReviewCheck;
+};
+
+/**
+ * 安全提示的分級標籤。
+ *
+ * 內部鍵值沿用 info／attention／urgent（排序要用），但**印出來的字不能暗示即時性**。
+ * 這些數值全部來自沒有採檢日的申報資料——一筆 Na 124 可能是兩年前住院時測的、
+ * 早就處理完了。標成「urgent」等於要醫師對一個可能已經不存在的狀況立刻反應。
+ *
+ * 分級真正的意思是「該優先核實哪一項目前狀態」，不是「現在有多急」。
+ */
+const SEVERITY_LABEL: Record<"info" | "attention" | "urgent", string> = {
+  urgent: "優先核實",
+  attention: "留意",
+  info: "參考",
+};
+
+/**
+ * 三個標題層級要一眼分得出來，否則「腦血管」和「掌握自己的數字」看起來
+ * 是同一種東西——前者是你的狀況，後者是要做的事。
+ *
+ *   ──── 分隔線＋【】  區塊
+ *   ◆                  模組
+ *   1. 2. 3.／・        內容（指令／資訊）
+ */
+function section(lines: string[], title: string) {
+  lines.push("────────────────────────────────", `【${title}】`, "");
+}
+
+/**
+ * 病人版：逐字使用固定文字，不出現代碼、分數或高／中／低風險標籤。
+ *
+ * 結構經過一次重整：主題模組只放該疾病特有的內容，通用照護、追蹤時程與
+ * 就醫警訊各集中一次，避免六個模組串起來後同一件事講六遍。
+ */
+export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptions): string {
+  const lines: string[] = [...draftBanner()];
+
+  lines.push("糖尿病衛教報告");
+  lines.push(`報告產生日期：${options.reportDate ?? "未提供"}`);
+  lines.push(`資料截至日期：${options.dataCutoff ?? "未提供"}`);
+  lines.push("");
+
+  const byId = new Map(plan.decisions.map((item) => [item.moduleId, item]));
+  /**
+   * suffix：狀態直接寫在標題上。
+   * 區塊開頭那句「以下是已經有的狀況」在第 17 行，讀到第 45 行的「腎臟」時
+   * 已經隔了 30 行，而器官名本身是中性的——單看標題分不出是「你已經有」
+   * 還是「你要預防」。
+   *
+   * merged：分型補充模組（EYE-T2 等）原本各自起一個「第二型糖尿病眼底檢查補充」
+   * 標題，讀起來像文件章節編號而不是對病人說話。改為併進母模組的內文。
+   */
+  const emit = (id: string, suffix = "", merged: string[] = []) => {
+    const moduleDef = MODULE_BY_ID.get(id);
+    if (!moduleDef) return;
+    lines.push(`◆ ${moduleDef.title}${suffix}`, "");
+    lines.push(moduleDef.patientText, "");
+    for (const extra of merged) lines.push(extra, "");
+    // 相關數值直接放在該器官段落，病人不必自己回頭對照文末附錄。
+    const entries = plan.labEntriesByModule[id];
+    if (entries?.length) {
+      // 時間限制在報告開頭講過一次，這裡不重複，否則每個器官段落都會再唸一遍。
+      // 標題帶上器官名，才不會和文末的「您的其他檢驗數值」撞名。
+      lines.push(`您的${moduleDef.title}相關數值：`, "");
+      // 數值是資訊、不是待辦。用「・」和行動項目的「1. 2. 3.」區隔，
+      // 否則同一份報告裡「1. 血糖 55–459」和「1. 每天查看腳背」讀起來是同一種東西。
+      entries.forEach((entry) => {
+        lines.push(`・${entry.text}`);
+        for (const message of entry.messages) lines.push(`   ${message}`);
+      });
+      lines.push("");
+    }
+    const missing = plan.missingByModule[id];
+    if (missing?.length) {
+      lines.push(`您的資料中沒有${missing.join("、")}的紀錄。回診時可以確認是否需要安排。`, "");
+    }
+  };
+
+  for (const id of ["BASE-01", "TYPE-UNCLEAR"]) {
+    if (plan.patientModuleIds.includes(id)) emit(id);
+  }
+
+  // 檢驗資料的時間限制整份報告只講一次，之後各處直接列數值。
+  const hasAnyValues = plan.labNotes.length > 0 || Object.keys(plan.labByModule).length > 0;
+  if (hasAnyValues) {
+    lines.push(
+      "以下提到的檢驗數值都來自健保申報紀錄。這些紀錄只有費用年月、沒有檢查日期，因此無法確認先後順序，也無法確認哪一筆最新。",
+      "",
+    );
+  }
+
+  // 緊急就醫時機放在最前面。這是全份唯一「延誤會造成傷害」的內容，
+  // 其餘都是參考資料——沒有人會在急性事件當下翻兩百行去找它。
+  if (plan.urgentSigns.length) {
+    section(lines, "什麼情況要立刻就醫");
+    // 分兩組。先前是一串 1–9，要逐條讀完才知道哪幾條該打 119。
+    // 「儘速就醫；若呼吸困難明顯再打 119」這種混合式的主要指示是儘速就醫，
+    // 放進 119 那組會誇大。只有整條就是叫人打 119 的才算。
+    const needs119 = (text: string) => /119/.test(text) && !/儘速就醫|當天/.test(text);
+    const groups: Array<[string, string[]]> = [
+      ["立即撥打 119", plan.urgentSigns.filter(needs119)],
+      ["儘速就醫", plan.urgentSigns.filter((item) => !needs119(item))],
+    ];
+    for (const [title, items] of groups) {
+      if (!items.length) continue;
+      lines.push(`◆ ${title}`, "");
+      items.forEach((item, index) => lines.push(`${index + 1}. ${item}`, ""));
+    }
+  }
+
+
+  const topicIds = plan.patientModuleIds.filter((id) => !["BASE-01", "TYPE-UNCLEAR"].includes(id));
+  /**
+   * 已發生與預防不分區。
+   *
+   * R 欄位來自我們看不到推導方式的來源倉儲，分成「您已有的」與「預防的」
+   * 兩區等於要病人自己去想「我到底有沒有」——而那個問題我們答不了。
+   * 該給的衛教照給，順序上已發生的排前面，但不標示狀態。
+   */
+  const orderedIds: string[] = [];
+  for (const kind of ["established", "prevention-active"] as const) {
+    for (const id of topicIds) {
+      if (/-T[12]$/.test(id)) continue;
+      const decision = byId.get(id);
+      const parent = decision ? null : topicIds.find((other) => byId.get(other) && id.startsWith(other.split("-")[0]));
+      const actual = decision?.kind ?? (parent ? byId.get(parent)?.kind : undefined);
+      if (actual !== kind) continue;
+      orderedIds.push(id);
+    }
+  }
+
+  if (orderedIds.length) {
+    section(lines, "與您有關的健康重點");
+    lines.push(
+      "以下項目是依您的健康紀錄挑選出來，建議您特別注意。如果您不確定自己是否有相關診斷，請在回診時向醫療團隊確認。",
+      "",
+    );
+    for (const id of orderedIds) {
+      const extras = topicIds
+        .filter((other) => /-T[12]$/.test(other) && other.split("-")[0] === id.split("-")[0])
+        .map((other) => MODULE_BY_ID.get(other)?.patientText)
+        .filter((text): text is string => Boolean(text));
+      emit(id, "", extras);
+    }
+  }
+
+  if (plan.moderateTopics.length) {
+    section(lines, "持續留意");
+    lines.push(
+      "以下項目目前建議維持既有的追蹤即可。這些是風險評估而不是診斷；如果您已經有相關診斷，請以醫療團隊的評估為準。",
+      "",
+    );
+    plan.moderateTopics.forEach((item, index) => {
+      const action = MODERATE_ACTION[item.topic];
+      lines.push(`${index + 1}. ${item.topicName}${action ? `：${action}` : ""}`);
+    });
+    lines.push("");
+  }
+
+  if (plan.labNoteEntries.length) {
+    section(lines, "您的其他檢驗數值");
+    // 說明緊接在它所解釋的那個數值下面。先前是數值列一區、說明列一區，
+    // 中間隔著別的數值，等於要病人自己配對。
+    plan.labNoteEntries.forEach((entry) => {
+      lines.push(`・${entry.text}`);
+      for (const message of entry.messages) lines.push(`   ${message}`);
+    });
+    lines.push("");
+    // 沒有對應到單一檢驗項目的判定（例如低血糖跨了兩種血糖項目）另外列。
+    // 已經貼在器官段落數值旁邊的也算配對過了，否則同一句會出現兩次。
+    const paired = new Set([
+      ...plan.labNoteEntries.flatMap((entry) => entry.messages),
+      ...Object.values(plan.labEntriesByModule).flatMap((entries) => entries.flatMap((entry) => entry.messages)),
+    ]);
+    for (const message of plan.labPatientMessages) {
+      if (!paired.has(message)) lines.push(message, "");
+    }
+    // 每一個超出目標的指標都要有提示，覆蓋不能只挑幾項。
+    for (const item of outOfTargetOnly(plan.targetComparisons)) {
+      if (item.patientMessage) lines.push(item.patientMessage, "");
+    }
+  }
+
+
+  if (plan.followUp.text) {
+    section(lines, "追蹤時程");
+    lines.push(plan.followUp.text, "");
+  }
+
+  // 「照護重點」與「每天可以做的事」是我們的內部分類（跨主題共用區塊 vs
+  // DSMES 自我照護模組），不是病人的分類——兩區都是「要做的事」，分成兩塊
+  // 只會讓人以為有什麼差別。合成一區。
+  if (plan.sharedBlockIds.length || plan.selfCareModuleIds.length) {
+    section(lines, "日常照護");
+    for (const id of plan.sharedBlockIds) {
+      const block = SHARED_CARE_BLOCKS.find((item) => item.id === id);
+      if (!block) continue;
+      lines.push(`◆ ${block.title}`, "");
+      lines.push(block.text, "");
+    }
+    const kidneyOrHeart = plan.decisions.some(
+      (item) => item.kind === "established" && (item.topic === 3 || item.topic === 5),
+    );
+    for (const id of plan.selfCareModuleIds) {
+      const moduleDef = SELF_CARE_BY_ID.get(id);
+      if (!moduleDef) continue;
+      let text = moduleDef.patientText;
+      for (const variant of moduleDef.definiteVariants ?? []) {
+        if (variant.when === "kidney-or-heart" && kidneyOrHeart) text = text.replace(variant.from, variant.to);
+      }
+      lines.push(`◆ ${moduleDef.title}`, "");
+      lines.push(text, "");
+    }
+  }
+
+  return lines.join("\n").trimEnd();
+}
+
+/** 醫師版：含 DCSI、R1–R7、PR1–PR7 代碼與分數（法規要求），以及個別化目標與安全旗標。 */
+const DIABETES_TYPE_LABEL: Record<PatientFacts["diabetesType"]["verdict"], string> = {
+  "type1-confirmed": "診斷碼指向第 1 型",
+  "type2-confirmed": "第 2 型",
+  conflicting: "⚠ 第 1 型與第 2 型診斷碼並存",
+  absent: "資料中無糖尿病診斷碼",
+};
+
+export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts, options: AssembleOptions): string {
+  const lines: string[] = [...draftBanner()];
+
+  lines.push("【AI 醫療人員報告】");
+  lines.push(`報告產生日期：${options.reportDate ?? "未提供"}`);
+  lines.push(`資料截至日期：${options.dataCutoff ?? "未提供"}`);
+  lines.push(`年齡：${facts.ageYears.known ? `${facts.ageYears.value} 歲` : "未提供"}｜性別：${facts.sex.known ? facts.sex.value : "未提供"}｜病程：${facts.diabetesDurationYears.known ? `${facts.diabetesDurationYears.value} 年` : "未提供"}`);
+  lines.push("");
+
+  const NUM = ["一", "二", "三", "四", "五", "六", "七", "八"];
+  let sectionNo = 0;
+  const section = (title: string) => `${NUM[sectionNo++]}、${title}`;
+
+  lines.push(section("併發症現況與風險預測"));
+  lines.push(`DCSI 總分：${facts.dcsiTotal.known ? facts.dcsiTotal.value : "來源未提供"}`);
+  const rByTopic = new Map(facts.existingComplications.map((item) => [item.code.slice(1), item]));
+  const prByTopic = new Map(facts.riskPredictions.map((item) => [item.code.slice(2), item]));
+  const kindByTopic = new Map(plan.decisions.map((item) => [String(item.topic), item.kind]));
+  const topics = Object.keys(TOPIC_NAMES).map(Number).sort((a, b) => a - b);
+  const width = Math.max(...topics.map((topic) => TOPIC_NAMES[topic].length));
+  for (const topic of topics) {
+    const key = String(topic);
+    const r = rByTopic.get(key);
+    const pr = prByTopic.get(key);
+    let state: string;
+    if (r?.present) {
+      state = `已發生（嚴重度 ${r.rawValue}）`;
+    } else if (kindByTopic.get(key) === "established") {
+      state = "已發生（依來源 CKD 註記；本項未輸出嚴重度）";
+    } else if (pr?.present && pr.value !== null) {
+      state = `未發生｜風險預測：${PR_ACTION_TIER[pr.value] ?? "未定義分級"}`;
+    } else {
+      state = "來源未提供現況與風險預測";
+    }
+    lines.push(`  ${TOPIC_NAMES[topic].padEnd(width, "　")}  ${state}`);
+  }
+  lines.push("  （來源對每一項只輸出其一：已發生者給嚴重度分數，未發生者給風險預測。）");
+  lines.push("");
+
+  // 只在類型有疑義時提出來。判定為第二型是常態，寫出來只是佔版面。
+  if (facts.diabetesType.verdict !== "type2-confirmed") {
+    lines.push(section("糖尿病類型"));
+    lines.push(`  ${DIABETES_TYPE_LABEL[facts.diabetesType.verdict]}｜${facts.diabetesType.note}`);
+    const icd = [...facts.diabetesType.type1IcdCodes, ...facts.diabetesType.type2IcdCodes];
+    if (icd.length) lines.push(`  相關診斷碼：${icd.join("、")}`);
+    lines.push("");
+  }
+
+  // 只列推導得出的目標值。推導依據、出處與「需醫療團隊確認」這類警語刻意不印——
+  // 這是給醫師看的報告，目標值本來就由他決定，把程式的推理過程貼上去只是雜訊。
+  const decided = plan.targets.targets.filter((item) => item.value);
+  if (decided.length) {
+    lines.push(`${section("依指引推導的個別化目標")}　來源：${RULES_SOURCE}`);
+    for (const item of decided) {
+      const rule = item.ruleId ? RULES_BY_ID.get(item.ruleId) : undefined;
+      lines.push(`  ${item.metric}：${item.value}${rule ? `　〔${citationShort(rule)}〕` : ""}`);
+    }
+    lines.push("");
+  }
+
+  // 只保留病人特有的安全提示。申報資料的通則性限制（檢驗只有費用年月、申報用藥
+  // 不等於目前用藥等）刻意不列——那些每份報告都一樣，醫師本來就知道，列了只是雜訊。
+  const disagreements = plan.selection?.disagreements ?? [];
+  const offTarget = outOfTargetOnly(plan.targetComparisons);
+  if (plan.targets.safetyFlags.length || plan.labThresholds.length || offTarget.length || disagreements.length) {
+    lines.push(section("需核實的檢驗結果"));
+    for (const item of offTarget) {
+      lines.push(`  [${SEVERITY_LABEL[item.severity]}] ${item.clinicianMessage}${item.citationShort ? `　〔${item.citationShort}〕` : ""}`);
+    }
+    // 由實際數值觸發的門檻判定排在最前面，因為它們最具體。
+    for (const hit of plan.labThresholds) {
+      const rule = hit.ruleId ? RULES_BY_ID.get(hit.ruleId) : undefined;
+      lines.push(`  [${SEVERITY_LABEL[hit.severity]}] ${hit.clinicianMessage}${rule ? `　〔${citationShort(rule)}〕` : ""}`);
+    }
+    // 帶實際數值的判定已經涵蓋通則版本，兩則並列等於同一件事講兩次。
+    const supersededFlags = plan.labThresholds.some((hit) => hit.code === "hba1c-unreliable")
+      ? new Set(["hba1c-reliability"])
+      : new Set<string>();
+    for (const flag of plan.targets.safetyFlags) {
+      if (supersededFlags.has(flag.code)) continue;
+      const rule = flag.ruleId ? RULES_BY_ID.get(flag.ruleId) : undefined;
+      lines.push(`  [${SEVERITY_LABEL[flag.severity]}] ${flag.message}${rule ? `　〔${citationShort(rule)}〕` : ""}`);
+    }
+    // 輔助判讀器對程式判定的異議很少出現；一旦出現就是需要人看的訊號。
+    for (const item of disagreements) {
+      lines.push(`  [異議] ${item.topic}｜程式：${item.program_decision}`);
+      lines.push(`    LLM：${item.your_view}`);
+    }
+    lines.push("");
+  }
+
+  // 檢驗結果合併成一節。分成「程式依指引判的」與「判讀器判的」兩節，
+  // 會讓血鈉、血鉀、血糖在同一份報告出現兩次——來源不同，但醫師看到的是同一個數字。
+  if (plan.labNotesForClinician.length || options.labReview) {
+    lines.push(section("檢驗結果"));
+    if (plan.labNotesForClinician.length) {
+      lines.push("  依指引門檻表逐條判定的核心指標：");
+      for (const note of plan.labNotesForClinician) lines.push(`  ${note}`);
+    }
+    if (options.labReview) {
+      lines.push(formatLabReview(options.labReview, new Set(plan.evaluatedAnalyteKeys)));
+    }
+    lines.push("");
+  }
+
+  return lines.join("\n").trimEnd();
+}
+
+/** 舊名保留，供既有呼叫端使用。 */
+export const assembleClinicianTrace = assembleClinicianReport;
+
+export { EDUCATION_MODULES };
+
+/** 把程式已完成的主題判定寫成文字，讓輔助判讀器知道哪些已納入。 */
+export function decisionsForPrompt(plan: ResolvedPlan): string {
+  const lines: string[] = ["【程式已完成的主題判定（不可更改）】"];
+  for (const item of plan.decisions) {
+    const label =
+      item.kind === "established"
+        ? "已納入・已發生"
+        : item.kind === "prevention-active"
+          ? "已納入・積極照護"
+            : item.kind === "prevention-moderate"
+              ? "簡短提醒"
+              : "未納入";
+    lines.push(`${item.moduleId}（R${item.topic} ${item.topicName}）：${label}｜${item.reason}`);
+  }
+  lines.push("", "【程式已納入的自我照護模組】");
+  for (const id of plan.selfCareModuleIds) lines.push(`${id}：${plan.selfCareReasons[id] ?? ""}`);
+  lines.push("", "【程式推導的個別化目標】");
+  for (const item of plan.targets.targets) {
+    lines.push(`${item.metric}：${item.value ?? "需醫療團隊定案"}（${item.reason}）`);
+  }
+  if (plan.targets.undetermined.length) {
+    lines.push("", "【資料不足無法判定】");
+    for (const item of plan.targets.undetermined) lines.push(`- ${item}`);
+  }
+  return lines.join("\n");
+}
