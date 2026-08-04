@@ -1,4 +1,4 @@
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
@@ -36,6 +36,7 @@ await Promise.all([
   rm(path.join(outputDir, "_headers"), { force: true }),
   rm(path.join(outputDir, ".assetsignore"), { force: true }),
   rm(path.join(outputDir, "assets", "_vinext_fonts"), { recursive: true, force: true }),
+  // og.jpg 留著：HTML 指向的是它。og.png 是 Worker 版用的原圖，靜態版不需要再帶 1.8 MB。
   rm(path.join(outputDir, "og.png"), { force: true }),
   rm(path.join(outputDir, "file.svg"), { force: true }),
   rm(path.join(outputDir, "globe.svg"), { force: true }),
@@ -55,5 +56,8 @@ for (const forbidden of [
 ]) {
   if (builtHtml.includes(forbidden)) throw new Error(`靜態頁仍包含根目錄路徑：${forbidden}`);
 }
+
+// 之前 og.jpg 只存在於 Pages 分支，rsync --delete 會把它清掉，社群預覽就變成 404。
+await stat(path.join(outputDir, "og.jpg"));
 
 console.log(outputDir);
