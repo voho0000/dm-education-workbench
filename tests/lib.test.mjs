@@ -25,7 +25,7 @@ import { resolveTargets } from "../app/lib/resolve-targets.ts";
 import { GUIDELINE_RULES, RULES_BY_ID } from "../app/lib/guideline-rules.ts";
 import { parseLabReview, labSectionOf, LAB_REVIEW_PROMPT } from "../app/lib/lab-llm.ts";
 import { extractLabFindings, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
-import { parseLabNarrative, formatLabNarrative } from "../app/lib/lab-narrative.ts";
+import { parseLabNarrative, formatLabNarrative, LAB_NARRATIVE_PROMPT } from "../app/lib/lab-narrative.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
 
 const baseState = {
@@ -2325,4 +2325,38 @@ test("有檢驗敘述時，草稿橫幅要標示它未經逐句核准", () => {
   // 沒有敘述時退回程式組出的固定句型
   const without = assemblePatientReport(plan, { reportDate: "2026-08-04", dataCutoff: null });
   assert.ok(!without.includes("由模型直接撰寫"));
+});
+
+test("有 LLM 敘述時，器官段落不再嵌入數值，但保留缺檢提示", () => {
+  // 同一個 eGFR 在腎臟段落與檢驗敘述各講一次，是兩種語氣講同一件事。
+  // 缺檢提示要留——敘述器只描述存在的紀錄，不知道「該有而沒有」。
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23", R3: 2 },
+    rawSources: {
+      labData: {
+        rObject: [{ fee_ym: "202512", assay_item_name: "eGFR", assay_value: "43.3", unit_data: "ml/min/1.73m2" }],
+      },
+    },
+  });
+  const plan = resolvePlan(null, facts);
+  const opts = { reportDate: "2026-08-04", dataCutoff: null };
+
+  const without = assemblePatientReport(plan, opts);
+  assert.match(without, /您的腎臟相關數值：/, "沒有敘述時仍要嵌入數值");
+
+  const withNarrative = assemblePatientReport(plan, {
+    ...opts,
+    labNarrative: parseLabNarrative(
+      JSON.stringify({ narrative: "腎臟方面，腎絲球過濾率出現過 43.3。", cited_values: [{ item: "eGFR", value: "43.3" }] }),
+      facts,
+    ),
+  });
+  assert.ok(!withNarrative.includes("您的腎臟相關數值："), "有敘述時不再嵌入，避免同一個數值講兩次");
+  assert.match(withNarrative, /您的資料中沒有.*UACR.*的紀錄/, "缺檢提示要保留");
+  assert.equal((withNarrative.match(/43\.3/g) ?? []).length, 1, "同一個數值只該出現一次");
+});
+
+test("敘述器要被要求指出完全沒有紀錄的核心指標", () => {
+  assert.match(LAB_NARRATIVE_PROMPT, /完全沒有出現，要指出來/);
 });

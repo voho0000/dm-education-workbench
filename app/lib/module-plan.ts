@@ -636,6 +636,10 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
    * merged：分型補充模組（EYE-T2 等）原本各自起一個「第二型糖尿病眼底檢查補充」
    * 標題，讀起來像文件章節編號而不是對病人說話。改為併進母模組的內文。
    */
+  // 有 LLM 敘述時，數值全部集中在那一段；器官段落不再嵌入，否則同一個 eGFR
+  // 會用兩種語氣講兩次。缺檢提示保留——那是程式知道而敘述器不知道的事
+  // （它只描述存在的紀錄，不知道「該有而沒有」）。
+  const inlineValues = !options.labNarrative;
   const emit = (id: string, suffix = "", merged: string[] = []) => {
     const moduleDef = MODULE_BY_ID.get(id);
     if (!moduleDef) return;
@@ -643,7 +647,7 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
     lines.push(moduleDef.patientText, "");
     for (const extra of merged) lines.push(extra, "");
     // 相關數值直接放在該器官段落，病人不必自己回頭對照文末附錄。
-    const entries = plan.labEntriesByModule[id];
+    const entries = inlineValues ? plan.labEntriesByModule[id] : undefined;
     if (entries?.length) {
       // 時間限制在報告開頭講過一次，這裡不重複，否則每個器官段落都會再唸一遍。
       // 標題帶上器官名，才不會和文末的「您的其他檢驗數值」撞名。
