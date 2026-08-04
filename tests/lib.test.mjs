@@ -25,6 +25,7 @@ import { resolveTargets } from "../app/lib/resolve-targets.ts";
 import { GUIDELINE_RULES, RULES_BY_ID } from "../app/lib/guideline-rules.ts";
 import { parseLabReview, labSectionOf, LAB_REVIEW_PROMPT } from "../app/lib/lab-llm.ts";
 import { extractLabFindings, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
+import { parseLabNarrative, formatLabNarrative } from "../app/lib/lab-narrative.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
 
 const baseState = {
@@ -2254,4 +2255,74 @@ test("目標比對的說明也要貼在對應數值下面，不得掉成孤兒",
   const lines = report.slice(report.indexOf("您的其他檢驗數值")).split("\n");
   const index = lines.findIndex((l) => /^・飯前血糖：/.test(l.trim()));
   assert.match(lines[index + 1], /飯前血糖/, "說明必須緊接在數值下一行");
+});
+
+test("病人版檢驗敘述：數值逐一比對來源，禁止事項會被標記", () => {
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "09005C", assay_item_name: "Glu-AC", assay_value: "315", unit_data: "mg/dL" },
+          { fee_ym: "202512", assay_item_name: "HB", assay_value: "8.4", unit_data: "g/dL" },
+        ],
+      },
+    },
+  });
+
+  const clean = parseLabNarrative(
+    JSON.stringify({
+      narrative: "您的飯前血糖出現過 315 mg/dL，高於一般目標 80–130 mg/dL。血色素 8.4 g/dL 低於一般範圍。",
+      cited_values: [
+        { item: "Glu-AC", value: "315" },
+        { item: "HB", value: "8.4" },
+      ],
+    }),
+    facts,
+  );
+  assert.deepEqual(clean.unverifiedValues, []);
+  // 80 與 130 是指引門檻表裡的目標值，不是病人數值，但也不是模型自己編的
+  assert.deepEqual(clean.uncitedNumbers, []);
+  assert.deepEqual(clean.bannedPhrases, []);
+
+  const dirty = parseLabNarrative(
+    JSON.stringify({
+      narrative:
+        "您最近一次的血糖是 999 mg/dL，比上次惡化。建議您調整藥物劑量。另外血鉀 4.2 mmol/L。",
+      cited_values: [{ item: "Glu-AC", value: "999" }],
+    }),
+    facts,
+  );
+  assert.equal(dirty.unverifiedValues.length, 1, "999 不在來源中");
+  assert.deepEqual(dirty.uncitedNumbers, ["4.2"], "文中出現但沒列進引用清單");
+  assert.ok(dirty.bannedPhrases.includes("聲稱時序或趨勢"));
+  assert.ok(dirty.bannedPhrases.includes("處置建議"));
+
+  const rendered = formatLabNarrative(dirty).join("\n");
+  assert.match(rendered, /⚠ 這一段未通過自動檢查/);
+  // 檢查不改寫文字——判定是它的職責
+  assert.ok(rendered.includes("您最近一次的血糖是 999 mg/dL"));
+});
+
+test("有檢驗敘述時，草稿橫幅要標示它未經逐句核准", () => {
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23", R2: 2 },
+    rawSources: {},
+  });
+  const plan = resolvePlan(null, facts);
+  const narrative = parseLabNarrative(JSON.stringify({ narrative: "測試段落。", cited_values: [] }), facts);
+
+  const withNarrative = assemblePatientReport(plan, {
+    reportDate: "2026-08-04",
+    dataCutoff: null,
+    labNarrative: narrative,
+  });
+  assert.match(withNarrative, /由模型直接撰寫，未經醫療團隊逐句核准/);
+  assert.match(withNarrative, /【您的檢驗數值】/);
+
+  // 沒有敘述時退回程式組出的固定句型
+  const without = assemblePatientReport(plan, { reportDate: "2026-08-04", dataCutoff: null });
+  assert.ok(!without.includes("由模型直接撰寫"));
 });

@@ -34,6 +34,7 @@ import {
 } from "./lab-findings.ts";
 import { ANALYTE_TO_MODULE, compareToTargets, outOfTargetOnly } from "./target-comparison.ts";
 import { formatLabReview, type LabReviewCheck } from "./lab-llm.ts";
+import { formatLabNarrative, type LabNarrativeCheck } from "./lab-narrative.ts";
 
 /**
  * PR 數值的極性——整個 arm C 的臨床意義都掛在這一個常數上，改錯會把每位病人的
@@ -522,10 +523,14 @@ export function resolvePlan(selection: SelectorOutput | null, facts: PatientFact
   };
 }
 
-function draftBanner(): string[] {
-  if (MODULE_CATALOG_APPROVED) return [];
+function draftBanner(narrative = false): string[] {
+  const extra = narrative
+    ? ["※ 本報告的「您的檢驗數值」一段由模型直接撰寫，未經醫療團隊逐句核准；數值已由程式逐一比對來源。"]
+    : [];
+  if (MODULE_CATALOG_APPROVED) return extra.length ? [...extra, ""] : [];
   return [
     `※ DRAFT｜衛教模組 ${MODULE_CATALOG_VERSION}／自我照護模組 ${SELF_CARE_VERSION}／指引門檻表 ${RULES_VERSION} 均尚未經醫療團隊核准，僅供流程比較，不得提供給病人。`,
+    ...extra,
     "",
   ];
 }
@@ -571,6 +576,13 @@ export type AssembleOptions = {
   dataCutoff: string | null;
   /** 檢驗判讀器的輸出；未執行時省略。只影響醫師版。 */
   labReview?: LabReviewCheck;
+  /**
+   * 病人版的檢驗敘述；未執行時省略，改用程式組出的固定句型。
+   *
+   * 這是報告中唯一一段未經逐句核准的文字。程式驗證它引用的數值與禁止事項，
+   * 但不改寫它——判定是它的職責。
+   */
+  labNarrative?: LabNarrativeCheck;
 };
 
 /**
@@ -607,7 +619,7 @@ function section(lines: string[], title: string) {
  * 就醫警訊各集中一次，避免六個模組串起來後同一件事講六遍。
  */
 export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptions): string {
-  const lines: string[] = [...draftBanner()];
+  const lines: string[] = [...draftBanner(Boolean(options.labNarrative))];
 
   lines.push("糖尿病衛教報告");
   lines.push(`報告產生日期：${options.reportDate ?? "未提供"}`);
@@ -731,29 +743,36 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
     lines.push("");
   }
 
+  if (options.labNarrative) {
+    // LLM 直接寫的連貫段落。固定句型只涵蓋程式有規則的項目，而且會把
+    // 「曾出現偏低」與「曾出現偏高」並排成兩句，要讀者自己合起來想。
+    section(lines, "您的檢驗數值");
+    lines.push(...formatLabNarrative(options.labNarrative), "");
+  } else {
   // 沒有配對到任何數值的提醒（例如「資料中沒有 HbA1c 紀錄」、低血糖跨了兩種
-  // 血糖項目）也必須印出來。先前整段包在 labNoteEntries.length 裡，數值全部
-  // 被嵌進器官段落時 labNoteEntries 是空的，這些提醒就跟著消失了。
-  const pairedMessages = new Set([
-    ...plan.labNoteEntries.flatMap((entry) => entry.messages),
-    ...Object.values(plan.labEntriesByModule).flatMap((entries) => entries.flatMap((entry) => entry.messages)),
-  ]);
-  const looseMessages = [
-    ...plan.labPatientMessages.filter((message) => !pairedMessages.has(message)),
-    ...outOfTargetOnly(plan.targetComparisons)
-      .map((item) => item.patientMessage)
-      .filter((message): message is string => Boolean(message))
-      .filter((message) => !pairedMessages.has(message)),
-  ];
+    // 血糖項目）也必須印出來。先前整段包在 labNoteEntries.length 裡，數值全部
+    // 被嵌進器官段落時 labNoteEntries 是空的，這些提醒就跟著消失了。
+    const pairedMessages = new Set([
+      ...plan.labNoteEntries.flatMap((entry) => entry.messages),
+      ...Object.values(plan.labEntriesByModule).flatMap((entries) => entries.flatMap((entry) => entry.messages)),
+    ]);
+    const looseMessages = [
+      ...plan.labPatientMessages.filter((message) => !pairedMessages.has(message)),
+      ...outOfTargetOnly(plan.targetComparisons)
+        .map((item) => item.patientMessage)
+        .filter((message): message is string => Boolean(message))
+        .filter((message) => !pairedMessages.has(message)),
+    ];
 
-  if (plan.labNoteEntries.length || looseMessages.length) {
-    section(lines, "您的其他檢驗數值");
-    plan.labNoteEntries.forEach((entry) => {
-      lines.push(`・${entry.text}`);
-      for (const message of entry.messages) lines.push(`   ${message}`);
-    });
-    if (plan.labNoteEntries.length) lines.push("");
-    for (const message of looseMessages) lines.push(message, "");
+    if (plan.labNoteEntries.length || looseMessages.length) {
+      section(lines, "您的其他檢驗數值");
+      plan.labNoteEntries.forEach((entry) => {
+        lines.push(`・${entry.text}`);
+        for (const message of entry.messages) lines.push(`   ${message}`);
+      });
+      if (plan.labNoteEntries.length) lines.push("");
+      for (const message of looseMessages) lines.push(message, "");
+    }
   }
 
   if (plan.followUp.text) {

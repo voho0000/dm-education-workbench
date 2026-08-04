@@ -30,6 +30,7 @@ import {
 } from "../app/lib/module-plan.ts";
 import { GUIDELINE_RULES, formatRules, RULES_VERSION } from "../app/lib/guideline-rules.ts";
 import { LAB_REVIEW_PROMPT, labSectionOf, parseLabReview } from "../app/lib/lab-llm.ts";
+import { LAB_NARRATIVE_PROMPT, parseLabNarrative } from "../app/lib/lab-narrative.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
 
 function parseArgs(argv) {
@@ -104,7 +105,15 @@ for (const name of names) {
       .catch(() => null);
   }
 
-  const patientReport = assemblePatientReport(plan, options);
+  // 病人版的檢驗敘述：由 LLM 直接寫，程式驗證數值與禁止事項。
+  let labNarrative = null;
+  if (args.selector) {
+    labNarrative = await readFile(path.join(args.selector, id, "narrative.output.json"), "utf8")
+      .then((text) => parseLabNarrative(text, facts))
+      .catch(() => null);
+  }
+
+  const patientReport = assemblePatientReport(plan, { ...options, labNarrative: labNarrative ?? undefined });
   const clinicianReport = assembleClinicianReport(plan, facts, { ...options, labReview: labReview ?? undefined });
 
   const dir = path.join(args.out, id);
@@ -120,6 +129,11 @@ for (const name of names) {
   await writeFile(
     path.join(dir, "05_檢驗判讀_LLM輸入.txt"),
     `${LAB_REVIEW_PROMPT}\n\n---\n\n${labSectionOf(llmText)}`,
+    "utf8",
+  );
+  await writeFile(
+    path.join(dir, "06_檢驗敘述_LLM輸入.txt"),
+    `${LAB_NARRATIVE_PROMPT}\n\n---\n\n${labSectionOf(llmText)}`,
     "utf8",
   );
 
