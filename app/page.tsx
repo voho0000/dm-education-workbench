@@ -412,7 +412,7 @@ export default function Home() {
         (item) => item.kind !== "excluded" && item.kind !== "prevention-moderate",
       ).length;
       setNotice(
-        `完成：程式依 R／PR 納入 ${full} 個併發症主題、${plan.moderateTopics.length} 個簡短提醒、${plan.selfCareModuleIds.length} 個自我照護模組${
+        `完成：程式依 R／PR 納入 ${full} 個併發症主題、${plan.selfCareModuleIds.length} 個自我照護模組${
           found.length ? "" : "；自動檢查全數通過"
         }。`,
       );
@@ -572,11 +572,11 @@ export default function Home() {
                 <dd>{preview.decisions.filter((item) => item.kind === "established").length} 項</dd>
               </div>
               <div>
-                <dt>預防重點</dt>
+                <dt>預防重點・積極照護</dt>
                 <dd>{preview.decisions.filter((item) => item.kind === "prevention-active").length} 項</dd>
               </div>
               <div>
-                <dt>簡短提醒</dt>
+                <dt>預防重點・適度介入</dt>
                 <dd>{preview.moderateTopics.length} 項</dd>
               </div>
               <div>

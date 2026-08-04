@@ -87,6 +87,13 @@ export type PatientFacts = {
     ckd: Maybe<boolean>;
     p4p: Maybe<boolean>;
   };
+  /**
+   * 申報診斷碼裡直接指向慢性腎臟病的碼。
+   *
+   * CKD 欄位為 0、R3 也沒有值的病人仍可能有這些碼——DCSI 只認診斷碼，
+   * 而診斷碼只出現在有開藥的就診，漏掉的機會不小。
+   */
+  ckdIcdCodes: string[];
   dcsiTotal: Maybe<number>;
   grade: Maybe<string>;
   ageGroup: Maybe<string>;
@@ -106,6 +113,15 @@ export type PatientFacts = {
   /** 抽取過程中偵測到、需要人工注意的資料品質問題 */
   dataQualityFlags: string[];
 };
+
+/**
+ * 慢性腎臟病／糖尿病腎病變的申報診斷碼。
+ *
+ * 用 DCSI 腎病變本來就採用的碼集（ICD-9 250.4x、580–588、593.9、V42.0、V45.1、V56.x
+ * 對應到 ICD-10），因為要補的正是 R3 應該抓到卻沒抓到的那一塊。
+ * 刻意不含 N17（急性腎損傷）——那是急性事件，不是慢性腎臟病。
+ */
+const CKD_ICD = /^(E1[0-4]2|N0[0-8]|N1[89]|N2[5-8]|Z940|Z992|Z49)/i;
 
 const T1_ICD = /^E10/i;
 const T2_ICD = /^E11/i;
@@ -358,6 +374,13 @@ export function extractPatientFacts(input: unknown): PatientFacts {
     sex: resolvedSex ? known(resolvedSex) : unknown("userInfo.gender 未提供或無法解讀"),
     diabetesOnsetDate: onset ? known(onset) : unknown("來源未提供 INDX_DATE"),
     diabetesDurationYears: durationRaw !== null ? known(Number(durationRaw.toFixed(1))) : unknown("來源未提供 T"),
+    ckdIcdCodes: [
+      ...new Set(
+        medications
+          .map((record) => (isRecord(record) ? String(record.icd_code ?? "").trim() : ""))
+          .filter((code) => code && CKD_ICD.test(code.replace(/\./g, ""))),
+      ),
+    ].sort(),
     comorbidityFlags: {
       hypertension: flagFromCode(userInput.HT, "HT"),
       hyperlipidemia: flagFromCode(userInput.HL, "HL"),

@@ -207,7 +207,6 @@ export function DecisionTrace({ plan, facts }: { plan: ResolvedPlan; facts: Pati
         note="這就是組裝結果。正文逐字來自固定模組，模型不改寫。"
         count={`${
           patientModules.length +
-          plan.moderateTopics.length +
           plan.sharedBlockIds.length +
           plan.selfCareModuleIds.length
         } 段`}
@@ -218,12 +217,6 @@ export function DecisionTrace({ plan, facts }: { plan: ResolvedPlan; facts: Pati
               <span className="traceOutlineTag">{moduleKindLabel(id)}</span>
               {moduleTitle(id)}
               <code>{id}</code>
-            </li>
-          ))}
-          {plan.moderateTopics.map((item) => (
-            <li key={`mod-${item.topic}`}>
-              <span className="traceOutlineTag">簡短提醒</span>
-              {item.topicName}
             </li>
           ))}
           {plan.sharedBlockIds.map((id) => (

@@ -72,7 +72,7 @@ export const CATEGORY_ORDER: RuleCategory[] = [
 export const TRACE_KIND_LABEL: Record<TopicKind, string> = {
   established: "已發生・完整模組",
   "prevention-active": "尚未發生・預防內容",
-  "prevention-moderate": "尚未發生・簡短提醒",
+  "prevention-moderate": "尚未發生・適度介入",
   excluded: "不納入",
 };
 

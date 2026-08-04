@@ -1459,16 +1459,22 @@ test("腎功能不全時病人版必須說明糖化血色素可能不準", () =>
   assert.match(report, /貧血/, "腎性貧血要出現在病人版");
 });
 
-test("持續留意的項目必須附帶可執行的一句話", () => {
+test("PR=1 也展開完整模組，不再只給一句簡短提醒", () => {
   const facts = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03", PR2: PR_MODERATE, PR5: PR_MODERATE },
     rawSources: {},
   });
-  const report = assemblePatientReport(resolvePlan(null, facts), { reportDate: "2026-08-03", dataCutoff: null });
-  const block = report.slice(report.indexOf("持續留意"));
-  // 只印病名等於製造焦慮又不給出路。
-  assert.match(block, /腦血管疾病：.+119/);
-  assert.match(block, /心血管疾病：.+/);
+  const plan = resolvePlan(null, facts);
+  assert.ok(plan.topicModuleIds.includes("STROKE-CORE"), "PR2=1 要帶腦血管模組");
+  assert.ok(plan.topicModuleIds.includes("HEART-CORE"), "PR5=1 要帶心血管模組");
+
+  const report = assemblePatientReport(plan, { reportDate: "2026-08-03", dataCutoff: null });
+  // 只印病名等於製造焦慮又不給出路；現在給的是整個模組
+  assert.ok(report.includes("腦血管"), "模組正文要真的印出來");
+  assert.ok(report.includes("心臟"), "模組正文要真的印出來");
+  assert.ok(!report.includes("持續留意"), "簡短提醒那一區已併入主題段落，不得殘留");
+  // 併進來之後，風險預測與確診的區別只剩這一句在扛
+  assert.match(report, /來自風險評估而不是診斷/);
 });
 
 test("需要撥打 119 的情況排在儘速就醫之前", () => {
@@ -2497,4 +2503,65 @@ test("判定路徑：每一種判定結果都要有標籤，不得空白", () =>
   for (const hit of resolvePlan(null, facts).labThresholds) {
     assert.ok(TRACE_SEVERITY_LABEL[hit.severity], `嚴重度 ${hit.severity} 沒有標籤`);
   }
+});
+
+test("申報診斷碼出現慢性腎臟病時，即使 CKD 欄位為 0、R3 缺值也要帶腎臟模組", () => {
+  // DCSI 只認診斷碼，而診斷碼只出現在有開藥的就診——R3 漏掉腎病變是常態，
+  // 所以診斷碼要能獨立把腎臟主題救回來。
+  const withKidneyIcd = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", CKD: 0, PR3: PR_LOW },
+    rawSources: {
+      medication: {
+        rObject: [{ drug_date: "2026-01-10", icd_code: "E1121", icd_cname: "糖尿病腎病變", drug_ing_name: "METFORMIN HCL" }],
+      },
+    },
+  });
+  assert.deepEqual(withKidneyIcd.ckdIcdCodes, ["E1121"]);
+  const kidney = resolvePlan(null, withKidneyIcd).decisions.find((item) => item.topic === 3);
+  assert.equal(kidney.kind, "established");
+  assert.match(kidney.reason, /申報診斷碼出現慢性腎臟病/);
+
+  // 沒有腎臟診斷碼就不得無中生有：PR3=0 仍然不納入
+  const withoutKidneyIcd = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", CKD: 0, PR3: PR_LOW },
+    rawSources: {
+      medication: { rObject: [{ drug_date: "2026-01-10", icd_code: "E119", icd_cname: "第2型糖尿病", drug_ing_name: "METFORMIN HCL" }] },
+    },
+  });
+  assert.deepEqual(withoutKidneyIcd.ckdIcdCodes, []);
+  assert.equal(resolvePlan(null, withoutKidneyIcd).decisions.find((item) => item.topic === 3).kind, "excluded");
+});
+
+test("急性腎損傷不算慢性腎臟病", () => {
+  // N17 是急性事件。拿它當 CKD 會對一次住院急性腎損傷的人說他有慢性腎臟病。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", CKD: 0, PR3: PR_LOW },
+    rawSources: {
+      medication: { rObject: [{ drug_date: "2026-01-10", icd_code: "N179", icd_cname: "急性腎衰竭", drug_ing_name: "METFORMIN HCL" }] },
+    },
+  });
+  assert.deepEqual(facts.ckdIcdCodes, []);
+  assert.equal(resolvePlan(null, facts).decisions.find((item) => item.topic === 3).kind, "excluded");
+});
+
+test("納入與不納入的分界只剩 PR=0 與兩者皆缺", () => {
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", R2: 1, R5: 2, PR1: PR_HIGH, PR4: PR_MODERATE, PR6: PR_LOW },
+    rawSources: {},
+  });
+  const byTopic = new Map(resolvePlan(null, facts).decisions.map((item) => [item.topic, item.kind]));
+  assert.equal(byTopic.get(2), "established");        // R=1
+  assert.equal(byTopic.get(5), "established");        // R=2
+  assert.equal(byTopic.get(1), "prevention-active");  // PR=2
+  assert.equal(byTopic.get(4), "prevention-moderate");// PR=1
+  assert.equal(byTopic.get(6), "excluded");           // PR=0
+  assert.equal(byTopic.get(3), "excluded");           // R 與 PR 皆缺
+
+  // 前四項都要真的帶到模組
+  const plan = resolvePlan(null, facts);
+  for (const id of ["STROKE-CORE", "HEART-CORE", "EYE-CORE", "NERVE-CORE"]) {
+    assert.ok(plan.topicModuleIds.includes(id), `${id} 應納入`);
+  }
+  assert.ok(!plan.topicModuleIds.includes("LEG-CIRCULATION-CORE"), "PR6=0 不得納入");
+  assert.ok(!plan.topicModuleIds.includes("KIDNEY-CORE"), "R3／PR3 皆缺不得納入");
 });

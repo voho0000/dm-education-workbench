@@ -133,6 +133,7 @@ export function decideTopics(facts: PatientFacts): TopicDecision[] {
   const decisions: TopicDecision[] = [];
   const ckdFlag = facts.comorbidityFlags.ckd;
   const hasCkdFlag = ckdFlag.known && ckdFlag.value;
+  const ckdIcdCodes = facts.ckdIcdCodes;
 
   for (let topic = 1; topic <= 6; topic += 1) {
     const r = facts.existingComplications.find((item) => item.code === `R${topic}`);
@@ -153,12 +154,16 @@ export function decideTopics(facts: PatientFacts): TopicDecision[] {
       continue;
     }
 
-    // 來源 CKD 欄位是獨立於 DCSI 的既有診斷宣告，優先於 R3 的缺值。
-    if (topic === 3 && hasCkdFlag) {
+    // 來源 CKD 欄位與申報診斷碼都是獨立於 DCSI 的既有診斷宣告，優先於 R3 的缺值。
+    // DCSI 只認診斷碼，而診斷碼只出現在有開藥的就診，所以 R3 漏掉腎病變的機會不小。
+    if (topic === 3 && (hasCkdFlag || ckdIcdCodes.length > 0)) {
+      const basis = hasCkdFlag
+        ? "來源 CKD 欄位為 1"
+        : `申報診斷碼出現慢性腎臟病（${ckdIcdCodes.join("、")}）`;
       decisions.push({
         ...base,
         kind: "established",
-        reason: `來源 CKD 欄位為 1（已有慢性腎臟病），即使 R3${rPresent ? `=${rValue}` : " 缺值"} 也以已發生處理。`,
+        reason: `${basis}，即使 R3${rPresent ? `=${rValue}` : " 缺值"} 也以已發生處理。`,
       });
       continue;
     }
@@ -176,7 +181,7 @@ export function decideTopics(facts: PatientFacts): TopicDecision[] {
       decisions.push({
         ...base,
         kind: "prevention-moderate",
-        reason: `PR${topic}=${PR_MODERATE}（${PR_ACTION_TIER[PR_MODERATE]}），尚未發生；以簡短提醒呈現，不展開完整模組。`,
+        reason: `PR${topic}=${PR_MODERATE}（${PR_ACTION_TIER[PR_MODERATE]}），尚未發生；納入預防內容。`,
       });
       continue;
     }
@@ -358,8 +363,9 @@ export function resolvePlan(selection: SelectorOutput | null, facts: PatientFact
     "NERVE-CORE": "NERVE",
   };
 
+  // PR=1 與 PR=2 都展開完整模組；兩者的差別只留在醫師版與判定路徑的分級標示上。
   const topicModuleIds: string[] = [];
-  for (const item of [...established, ...active]) {
+  for (const item of [...established, ...active, ...moderate]) {
     topicModuleIds.push(item.moduleId);
     const prefix = TYPE_VARIANTS[item.moduleId];
     if (typeSuffix && prefix && MODULE_BY_ID.has(`${prefix}-${typeSuffix}`)) {
@@ -551,14 +557,6 @@ const EXPECTED_ANALYTES: Record<string, Array<{ analyte: Analyte; label: string 
   ],
 };
 
-const MODERATE_ACTION: Record<number, string> = {
-  1: "維持每年一次的眼底檢查，視力有變化時提早回診。",
-  2: "維持血壓與血脂的追蹤；出現單側無力、口齒不清或臉歪時立即撥打 119。",
-  3: "維持每年一次的尿液白蛋白與腎功能檢查。",
-  4: "每天看一次雙腳；出現麻、刺痛或感覺變鈍時回診時提出。",
-  5: "維持血壓與血脂的追蹤；活動時胸悶或明顯喘要就醫評估。",
-  6: "留意走路時小腿是否痠痛、休息後是否改善，並維持每年一次的足部循環檢查。",
-};
 
 
 export type AssembleOptions = {
@@ -706,7 +704,8 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
    * 該給的衛教照給，順序上已發生的排前面，但不標示狀態。
    */
   const orderedIds: string[] = [];
-  for (const kind of ["established", "prevention-active"] as const) {
+  // 順序：已發生排前面，其次積極照護，再來適度介入。三種都會展開完整模組。
+  for (const kind of ["established", "prevention-active", "prevention-moderate"] as const) {
     for (const id of topicIds) {
       if (/-T[12]$/.test(id)) continue;
       const decision = byId.get(id);
@@ -718,9 +717,18 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
   }
 
   if (orderedIds.length) {
+    // 有些主題是風險預測選進來的。原本這句話掛在「持續留意」那一區，
+    // 那一區併進來之後若不補回來，病人會把預測讀成已經確診。
+    const fromPrediction = orderedIds.some((id) => {
+      const decision = byId.get(id) ?? byId.get(topicIds.find((other) => id.startsWith(other.split("-")[0])) ?? "");
+      return decision?.kind === "prevention-active" || decision?.kind === "prevention-moderate";
+    });
     section(lines, "與您有關的健康重點");
     lines.push(
       "以下項目是依您的健康紀錄挑選出來，建議您特別注意。如果您不確定自己是否有相關診斷，請在回診時向醫療團隊確認。",
+      ...(fromPrediction
+        ? ["其中有些項目來自風險評估而不是診斷，列出來是為了提早注意，不代表您已經有這個疾病。"]
+        : []),
       "",
     );
     for (const id of orderedIds) {
@@ -730,19 +738,6 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
         .filter((text): text is string => Boolean(text));
       emit(id, "", extras);
     }
-  }
-
-  if (plan.moderateTopics.length) {
-    section(lines, "持續留意");
-    lines.push(
-      "以下項目目前建議維持既有的追蹤即可。這些是風險評估而不是診斷；如果您已經有相關診斷，請以醫療團隊的評估為準。",
-      "",
-    );
-    plan.moderateTopics.forEach((item, index) => {
-      const action = MODERATE_ACTION[item.topic];
-      lines.push(`${index + 1}. ${item.topicName}${action ? `：${action}` : ""}`);
-    });
-    lines.push("");
   }
 
   if (options.labNarrative) {
@@ -998,7 +993,7 @@ export function decisionsForPrompt(plan: ResolvedPlan): string {
         : item.kind === "prevention-active"
           ? "已納入・積極照護"
             : item.kind === "prevention-moderate"
-              ? "簡短提醒"
+              ? "已納入・適度介入"
               : "未納入";
     lines.push(`${item.moduleId}（R${item.topic} ${item.topicName}）：${label}｜${item.reason}`);
   }
