@@ -821,12 +821,22 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
 
   // 只列推導得出的目標值。推導依據、出處與「需醫療團隊確認」這類警語刻意不印——
   // 這是給醫師看的報告，目標值本來就由他決定，把程式的推理過程貼上去只是雜訊。
+  // 目標名稱也用檢驗報告的縮寫，和第四節一致。
+  const METRIC_LABEL: Record<string, string> = {
+    血壓: "BP（血壓）",
+    低密度脂蛋白膽固醇: "LDL-C",
+    高密度脂蛋白膽固醇: "HDL-C",
+    三酸甘油酯: "TG（三酸甘油酯）",
+    糖化血色素: "HbA1c",
+    空腹血糖: "Glucose AC（空腹血糖）",
+    餐後血糖: "Glucose PC（餐後血糖）",
+  };
   const decided = plan.targets.targets.filter((item) => item.value);
   if (decided.length) {
     lines.push(`${section("依指引推導的個別化目標")}　來源：${RULES_SOURCE}`);
     for (const item of decided) {
       const rule = item.ruleId ? RULES_BY_ID.get(item.ruleId) : undefined;
-      lines.push(`  ${item.metric}：${item.value}${rule ? `　〔${citationShort(rule)}〕` : ""}`);
+      lines.push(`  ${METRIC_LABEL[item.metric] ?? item.metric}：${item.value}${rule ? `　〔${citationShort(rule)}〕` : ""}`);
     }
     lines.push("");
   }

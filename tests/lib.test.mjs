@@ -913,8 +913,8 @@ test("醫師版的安全提示不夾帶資料來源的通則說明", () => {
     assert.ok(!section.includes(noise), `安全提示不應出現「${noise}」`);
   }
   // 同一件事不得由通則版與具體版各講一次
-  assert.equal((section.match(/糖化血色素/g) ?? []).length, 1);
-  assert.match(section, /血鈉曾出現異常值/);
+  assert.equal((section.match(/HbA1c/g) ?? []).length, 1);
+  assert.match(section, /Na（血鈉）曾出現異常值/);
 });
 
 test("就醫警訊全部集中，不散在自我照護段落中間", () => {
@@ -1607,11 +1607,11 @@ test("醫師版每一條門檻判定都能追到出處，沒有出處的要標�
 
   assert.match(report, /來源：中華民國糖尿病學會《2022第2型糖尿病臨床照護指引》/);
   // 目標值逐條附章表與頁次
-  assert.match(report, /低密度脂蛋白膽固醇：.+〔.+p\.\d+〕/);
+  assert.match(report, /LDL-C：.+〔.+p\.\d+〕/);
   // 低血糖門檻取自指引表一，必須帶得出頁次
-  assert.match(report, /屬低血糖範圍。.*〔表一 低血糖分級，p\.141〕/);
+  assert.match(report, /Glucose 曾出現.*屬低血糖範圍。.*〔表一 低血糖分級，p\.141〕/);
   // 指引沒有的門檻要明講，不能讓人以為每條都有依據
-  assert.match(report, /血鉀曾出現偏低數值.+一般臨床門檻，非本指引條列/);
+  assert.match(report, /K（血鉀）曾出現偏低數值.+一般臨床門檻，非本指引條列/);
 
   // 安全提示每一行不是有出處就是有「非本指引條列」標示
   const section = report.slice(report.indexOf("需核實的檢驗結果"), report.indexOf("、檢驗結果"));
@@ -1938,4 +1938,37 @@ test("醫師版檢驗項目一律英文縮寫在前，病人版一律中文在�
   assert.match(patient, /血鉀：/);
   assert.match(patient, /腎絲球過濾率（eGFR）/);
   assert.ok(!/^・K（/m.test(patient), "病人版不以英文縮寫起始");
+});
+
+test("醫師版的敘述句也用英文縮寫，不與清單相反", () => {
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23", CKD: 1 },
+    rawSources: {
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      labData: {
+        rObject: [
+          { fee_ym: "202512", assay_item_name: "K", assay_value: "3.1", unit_data: "mmol/L" },
+          { fee_ym: "202512", assay_item_name: "Na", assay_value: "122", unit_data: "mmol/L" },
+          { fee_ym: "202512", assay_item_name: "HB", assay_value: "8.4", unit_data: "g/dL" },
+          { fee_ym: "202512", assay_item_name: "HbA1c", assay_value: "6.4", unit_data: "%" },
+          { fee_ym: "202512", assay_item_name: "Sugar", assay_value: "418", unit_data: "mg/dL" },
+        ],
+      },
+    },
+  });
+  const report = assembleClinicianReport(resolvePlan(null, facts), facts, {
+    reportDate: "2026-08-04",
+    dataCutoff: null,
+  });
+  const section = report.slice(report.indexOf("需核實的檢驗結果"), report.indexOf("、檢驗結果"));
+  // 敘述句用中文、清單用英文，同一份報告兩種寫法
+  for (const chinese of ["血鉀曾", "血鈉曾", "血色素曾", "糖化血色素 ", "血糖曾"]) {
+    assert.ok(!section.includes(chinese), `敘述句不該用中文起頭：${chinese}`);
+  }
+  assert.match(section, /K（血鉀）/);
+  assert.match(section, /Na（血鈉）/);
+  assert.match(section, /Hb（血色素）/);
+  assert.match(section, /HbA1c/);
+  assert.match(section, /Glucose 曾出現/);
 });

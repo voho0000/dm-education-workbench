@@ -79,8 +79,8 @@ export function compareToTargets(findings: AnalyteFinding[], facts: PatientFacts
       outOfTarget,
       severity: worst >= 10 ? "urgent" : outOfTarget ? "attention" : "info",
       clinicianMessage: outOfTarget
-        ? `糖化血色素曾出現 ${worst}%，超過${elderly ? "指引高齡分級中最寬的數值門檻 8.0%（健康狀況差者不以糖化血色素為唯一目標，需醫療團隊判定）" : "一般成人目標 7.0%"}。`
-        : `糖化血色素曾出現 ${worst}%，未超過${elderly ? "高齡分級中最寬的數值門檻 8.0%" : "一般成人目標 7.0%"}。`,
+        ? `HbA1c 曾出現 ${worst}%，超過${elderly ? "指引高齡分級中最寬的數值門檻 8.0%（健康狀況差者不以糖化血色素為唯一目標，需醫療團隊判定）" : "一般成人目標 7.0%"}。`
+        : `HbA1c 曾出現 ${worst}%，未超過${elderly ? "高齡分級中最寬的數值門檻 8.0%" : "一般成人目標 7.0%"}。`,
       patientMessage: outOfTarget
         ? `您的資料中曾出現偏高的糖化血色素（${worst}%）。這是反映一段期間平均血糖的指標，請與醫療團隊確認適合您的目標值與下一步。`
         : null,
@@ -102,7 +102,7 @@ export function compareToTargets(findings: AnalyteFinding[], facts: PatientFacts
       target: "80–130 mg/dL（高齡或多重共病可放寬至 90–150）",
       outOfTarget,
       severity: worst >= 250 ? "attention" : "info",
-      clinicianMessage: `飯前血糖曾出現 ${fasting.min}–${fasting.max} mg/dL${outOfTarget ? `，最高超過一般成人目標上限 130` : ""}。`,
+      clinicianMessage: `Glucose AC 曾出現 ${fasting.min}–${fasting.max} mg/dL${outOfTarget ? `，最高超過一般成人目標上限 130` : ""}。`,
       patientMessage: outOfTarget
         ? `您的資料中曾出現偏高的飯前血糖（最高 ${worst} mg/dL）。這些紀錄沒有附檢查日期，請在回診時和醫療團隊一起看實際結果。`
         : null,
