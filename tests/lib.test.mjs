@@ -2227,3 +2227,31 @@ test("選模組輸出要抄回年齡與 DCSI，供核對是不是同一位病人
   const legacy = parseModuleSelection(JSON.stringify({ priorities: [] }));
   assert.equal(legacy.echo, null);
 });
+
+test("目標比對的說明也要貼在對應數值下面，不得掉成孤兒", () => {
+  // 說明有兩個來源：門檻判定與目標比對。先前只配對前者，
+  // 「飯前血糖 20–315」底下沒有說明，說明卻掉到區塊最後。
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "09005C", assay_item_name: "Glu-AC", assay_value: "315", unit_data: "mg/dL" },
+          { fee_ym: "202512", order_code: "09140C", assay_item_name: "Glu-PC", assay_value: "208", unit_data: "mg/dL" },
+        ],
+      },
+    },
+  });
+  const plan = resolvePlan(null, facts);
+  for (const analyte of ["fasting-glucose", "postprandial-glucose"]) {
+    const entry = plan.labNoteEntries.find((e) => e.text.includes(analyte === "fasting-glucose" ? "飯前血糖" : "餐後血糖"));
+    assert.ok(entry, `${analyte} 應出現在數值清單`);
+    assert.ok(entry.messages.length > 0, `${analyte} 的說明必須貼在它下面`);
+  }
+
+  const report = assemblePatientReport(plan, { reportDate: "2026-08-04", dataCutoff: null });
+  const lines = report.slice(report.indexOf("您的其他檢驗數值")).split("\n");
+  const index = lines.findIndex((l) => /^・飯前血糖：/.test(l.trim()));
+  assert.match(lines[index + 1], /飯前血糖/, "說明必須緊接在數值下一行");
+});

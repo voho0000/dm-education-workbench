@@ -431,9 +431,14 @@ export function resolvePlan(selection: SelectorOutput | null, facts: PatientFact
     (labByModule[moduleId] ??= []).push(text);
     (labEntriesByModule[moduleId] ??= []).push({
       text,
-      messages: labThresholds
-        .filter((hit) => hit.analyte === finding.analyte && hit.patientMessage)
-        .map((hit) => hit.patientMessage as string),
+      messages: [
+        ...labThresholds
+          .filter((hit) => hit.analyte === finding.analyte && hit.patientMessage)
+          .map((hit) => hit.patientMessage as string),
+        ...targetComparisons
+          .filter((item) => item.analyte === finding.analyte && item.outOfTarget && item.patientMessage)
+          .map((item) => item.patientMessage as string),
+      ],
     });
     inlined.add(finding.analyte);
   }
@@ -480,11 +485,20 @@ export function resolvePlan(selection: SelectorOutput | null, facts: PatientFact
     labNoteEntries: labFindings
       .filter((f) => !inlined.has(f.analyte))
       .map((f) => {
+        // 說明有兩個來源：門檻判定與目標比對。先前只配對前者，導致
+        // 「飯前血糖 20–315」底下沒有說明，而說明掉到區塊最後變成孤兒。
         const hits = labThresholds.filter((hit) => hit.analyte === f.analyte && hit.patientMessage);
+        const offTarget = targetComparisons.filter(
+          (item) => item.analyte === f.analyte && item.outOfTarget && item.patientMessage,
+        );
+        const messages = [
+          ...hits.map((hit) => hit.patientMessage as string),
+          ...offTarget.map((item) => item.patientMessage as string),
+        ];
         return {
           text: describeRange(f),
-          messages: hits.map((hit) => hit.patientMessage as string),
-          rank: hits.some((hit) => hit.severity === "urgent") ? 0 : hits.length ? 1 : 2,
+          messages,
+          rank: hits.some((hit) => hit.severity === "urgent") ? 0 : messages.length ? 1 : 2,
         };
       })
       .sort((a, b) => a.rank - b.rank)
