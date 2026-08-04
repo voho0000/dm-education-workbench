@@ -323,7 +323,6 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
   // 「至少每半年」仍然成立（那是下限），但那條註解沒有涵蓋它，追蹤頻率
   // 應由腎臟科決定——不能拿註 3 當出處說已經夠了。
   const egfrBelow60 = egfr && egfr.min < 60;
-  const egfrBelow30 = egfr && egfr.min < 30;
   const uacrAbove300 = uacr && uacr.values.some((v) => v.value > 300 || (v.value === 300 && v.qualifier === ">="));
   if (egfrBelow60 || uacrAbove300) {
     const parts: string[] = [];
@@ -335,11 +334,46 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       analyte: "eGFR",
       ruleId: "kidney-intensive-followup",
       severity: "attention",
-      clinicianMessage: `${parts.join("；")}。依指引${r?.statement ?? ""}${
-        egfrBelow30 ? "eGFR 低於 30 已超出本註適用範圍（30–60），追蹤頻率宜依腎臟科評估。" : ""
-      }`,
+      clinicianMessage: `${parts.join("；")}。依指引${r?.statement ?? ""}`,
       patientMessage:
         "您的資料中曾出現腎功能或尿蛋白的異常結果。指引建議這種情況至少每半年追蹤一次，請與醫療團隊確認您目前需要的追蹤頻率。（資料只有費用年月，無法確認這些結果的先後順序或是否為最新。）",
+      citation: r?.citation ?? null,
+    });
+  }
+
+  /**
+   * eGFR<30 時指引給的是轉介，不是某個追蹤頻率。
+   *
+   * 但那一段的前提是「糖尿病人因腎臟疾病之病因不能確診時」——貧血、
+   * 電解質不平衡是 DKD 情境下的附加條件，不是獨立觸發。單憑一個沒有日期的
+   * 血鈉 128、而病人根本沒有腎臟問題，就建議轉介腎臟科是過度延伸。
+   */
+  const hasKidneyDisease = Boolean(
+    egfrBelow60 || uacrAbove300 || (facts.comorbidityFlags.ckd.known && facts.comorbidityFlags.ckd.value),
+  );
+  const hbForReferral = get("haemoglobin");
+  const kForReferral = get("potassium");
+  const naForReferral = get("sodium");
+  const coFeatures = [
+    hbForReferral && hbForReferral.max < 11 ? `血色素持續偏低（最高 ${hbForReferral.max} g/dL）` : "",
+    kForReferral && (kForReferral.min < 3.0 || kForReferral.max > 5.5) ? "血鉀異常" : "",
+    naForReferral && (naForReferral.min < 130 || naForReferral.max > 150) ? "血鈉異常" : "",
+  ].filter(Boolean);
+  const severeEgfr = egfr && egfr.min < 30;
+  const referralReasons = severeEgfr
+    ? [`eGFR 曾出現低於 30 的數值（最低 ${egfr.min}）`, ...coFeatures]
+    : hasKidneyDisease && coFeatures.length
+      ? ["已有腎臟疾病證據", ...coFeatures]
+      : [];
+  if (referralReasons.length) {
+    const r = rule("referral-nephrology");
+    hits.push({
+      code: "referral-nephrology",
+      analyte: "eGFR",
+      ruleId: "referral-nephrology",
+      severity: "attention",
+      clinicianMessage: `${referralReasons.join("、")}。${r?.statement ?? ""}`,
+      patientMessage: null,
       citation: r?.citation ?? null,
     });
   }

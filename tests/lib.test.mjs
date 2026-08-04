@@ -2033,29 +2033,50 @@ test("醫師版有依指引的追蹤間隔，且用事實陳述與出處", () =>
   assert.match(patient, /建議每年做一次足部感覺檢查/);
 });
 
-test("eGFR 低於 30 時要說明已超出該註解的適用範圍", () => {
-  // 指引註 3 的條件是「eGFR 介於 30–60」。低於 30 時「至少每半年」仍是下限，
-  // 但那條註解沒有涵蓋它，不能拿它當出處說已經夠了。
-  const withEgfr = (value) =>
+test("eGFR 低於 30 給的是指引的轉介建議，不是含糊的「依腎臟科評估」", () => {
+  const withLabs = (rows) =>
     resolvePlan(
       null,
       extractPatientFacts({
         userInfo: { gender: "M" },
         userInput: { REPORT_DATE: "2026-07-23" },
-        rawSources: {
-          labData: {
-            rObject: [{ fee_ym: "202512", assay_item_name: "eGFR", assay_value: value, unit_data: "ml/min/1.73m2" }],
-          },
-        },
+        rawSources: { labData: { rObject: rows.map((r) => ({ fee_ym: "202512", ...r })) } },
       }),
-    ).labThresholds.find((h) => h.code === "kidney-intensive-followup");
+    ).labThresholds;
 
-  const stage3 = withEgfr("45");
-  assert.ok(stage3, "eGFR 45 應觸發加密追蹤");
-  assert.ok(!stage3.clinicianMessage.includes("腎臟科"), "在適用範圍內不需要額外說明");
+  const stage4 = withLabs([{ assay_item_name: "eGFR", assay_value: "24.1", unit_data: "ml/min/1.73m2" }]);
+  const referral = stage4.find((h) => h.code === "referral-nephrology");
+  assert.ok(referral, "eGFR 低於 30 應給轉介建議");
+  assert.match(referral.clinicianMessage, /建議轉介腎臟專科醫師/);
+  assert.match(referral.citation, /p\. ?200|第 200 頁/);
+  // 加密追蹤仍要出現，否則排程表沒有腎臟那一列
+  assert.ok(stage4.some((h) => h.code === "kidney-intensive-followup"));
 
-  const stage4 = withEgfr("24.1");
-  assert.ok(stage4, "eGFR 24.1 仍應出現加密追蹤，否則排程表沒有腎臟那一列");
-  assert.match(stage4.clinicianMessage, /超出本註適用範圍（30–60）/);
-  assert.match(stage4.clinicianMessage, /腎臟科/);
+  // eGFR 45 在註 3 範圍內，不該給轉介
+  const stage3 = withLabs([{ assay_item_name: "eGFR", assay_value: "45", unit_data: "ml/min/1.73m2" }]);
+  assert.ok(!stage3.some((h) => h.code === "referral-nephrology"));
+});
+
+test("沒有腎臟問題時，單一電解質異常不得觸發腎臟科轉介", () => {
+  // 指引那段的前提是「糖尿病人因腎臟疾病之病因不能確診時」；貧血與電解質
+  // 是 DKD 情境下的附加條件，不是獨立觸發。
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23" },
+    rawSources: {
+      labData: { rObject: [{ fee_ym: "202512", assay_item_name: "Na", assay_value: "128", unit_data: "mmol/L" }] },
+    },
+  });
+  const hits = resolvePlan(null, facts).labThresholds;
+  assert.ok(!hits.some((h) => h.code === "referral-nephrology"));
+
+  // 但同時有腎臟疾病證據時就要觸發
+  const withCkd = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23", CKD: 1 },
+    rawSources: {
+      labData: { rObject: [{ fee_ym: "202512", assay_item_name: "Na", assay_value: "128", unit_data: "mmol/L" }] },
+    },
+  });
+  assert.ok(resolvePlan(null, withCkd).labThresholds.some((h) => h.code === "referral-nephrology"));
 });

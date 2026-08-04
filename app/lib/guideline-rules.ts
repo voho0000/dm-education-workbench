@@ -334,6 +334,19 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
 
   // ── 轉診急迫度 ────────────────────────────────────────────
   {
+    /**
+     * 指引在糖尿病腎臟疾病那一章明確給了 eGFR<30 的處置：轉介，不是某個追蹤頻率。
+     * 同一段還把貧血與電解質不平衡列為轉介條件，這批病人常常同時符合好幾項。
+     */
+    id: "referral-nephrology",
+    category: "referral-urgency",
+    appliesTo: "eGFR 低於 30，或腎病病因不明、貧血、次發性副甲狀腺功能過高症、代謝性骨疾病、頑抗性高血壓、電解質不平衡",
+    statement: "建議轉介腎臟專科醫師，以增進醫療照護品質並延緩透析時機。",
+    citation: { section: "糖尿病腎臟疾病－轉介腎臟專科醫師", pdfPage: 200 },
+    patientFacing: false,
+  },
+
+  {
     id: "referral-eye-sameday",
     category: "referral-urgency",
     appliesTo: "突發性視力喪失或視網膜剝離徵象",
