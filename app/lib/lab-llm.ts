@@ -18,25 +18,6 @@
 import { analyteForItemName } from "./lab-findings.ts";
 import type { PatientFacts } from "./patient-facts.ts";
 
-/**
- * 常見縮寫的中文對照。判讀器逐字照抄來源的項目名稱（Mg、ALB、GGT），
- * 和上一節的中文名稱（血鉀、血鈉、腎絲球過濾率）風格不一致。
- * 對不上的就維持原名，不猜。
- */
-const ITEM_LABELS: Record<string, string> = {
-  MG: "鎂", ALB: "白蛋白", ALBUMIN: "白蛋白", GGT: "γ-GT", "R-GT": "γ-GT",
-  ALP: "鹼性磷酸酶", "ALK-P": "鹼性磷酸酶", ALT: "GPT", AST: "GOT",
-  SGPT: "ALT", SGOT: "AST", K: "血鉀", NA: "血鈉", CL: "血氯",
-  CA: "血鈣", P: "血磷", CRE: "肌酸酐", CREATININE: "肌酸酐", BUN: "尿素氮",
-  "UREA NITROGEN": "尿素氮", HB: "血色素", HCT: "血球比容", RBC: "紅血球",
-  WBC: "白血球", PLT: "血小板", TBIL: "總膽紅素", EGFR: "腎絲球過濾率",
-};
-
-export function labelForItem(name: string): string {
-  const zh = ITEM_LABELS[name.trim().toUpperCase()];
-  return zh && !name.includes(zh) ? `${name}（${zh}）` : name;
-}
-
 export const LAB_REVIEW_PROMPT = `你是協助整理檢驗報告的助手，讀者是忙碌的醫師。
 
 輸入分兩部分：先是這位病人的基本資料（含性別 gender 與生日 birthday，以及已發生併發症 R 與風險預測 PR 的原始欄位），接著是健保申報檢驗紀錄原文，每一筆包含項目名稱、數值、單位與來源提供的參考值。
@@ -250,7 +231,7 @@ export function formatLabReview(check: LabReviewCheck, alreadyShown: Set<string>
       const unit = item.unit ? ` ${item.unit}` : "";
       const other = item.worstOther ? `／另一端 ${item.worstOther}` : "";
       const flag = check.unverifiedValues.includes(item) ? "  ⚠ 此數值在來源中找不到" : "";
-      lines.push(`  ${labelForItem(item.item)}：${item.worst}${unit}${other}（參考 ${item.reference || "來源未提供"}）${item.why ? `｜${item.why}` : ""}${flag}`);
+      lines.push(`  ${item.item}：${item.worst}${unit}${other}（參考 ${item.reference || "來源未提供"}）${item.why ? `｜${item.why}` : ""}${flag}`);
     }
   } else {
     lines.push("  （無其他與糖尿病相關的異常）");

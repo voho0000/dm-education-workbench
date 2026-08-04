@@ -914,7 +914,7 @@ test("醫師版的安全提示不夾帶資料來源的通則說明", () => {
   }
   // 同一件事不得由通則版與具體版各講一次
   assert.equal((section.match(/HbA1c/g) ?? []).length, 1);
-  assert.match(section, /Na（血鈉）曾出現異常值/);
+  assert.match(section, /Na 曾出現異常值/);
 });
 
 test("就醫警訊全部集中，不散在自我照護段落中間", () => {
@@ -1611,7 +1611,7 @@ test("醫師版每一條門檻判定都能追到出處，沒有出處的要標�
   // 低血糖門檻取自指引表一，必須帶得出頁次
   assert.match(report, /Glucose 曾出現.*屬低血糖範圍。.*〔表一 低血糖分級，p\.141〕/);
   // 指引沒有的門檻要明講，不能讓人以為每條都有依據
-  assert.match(report, /K（血鉀）曾出現偏低數值.+一般臨床門檻，非本指引條列/);
+  assert.match(report, /K 曾出現偏低數值.+一般臨床門檻，非本指引條列/);
 
   // 安全提示每一行不是有出處就是有「非本指引條列」標示
   const section = report.slice(report.indexOf("需核實的檢驗結果"), report.indexOf("、檢驗結果"));
@@ -1889,10 +1889,10 @@ test("同一個檢驗項目不會在醫師版出現兩次", () => {
   });
 
   const section = report.slice(report.indexOf("、檢驗結果"));
-  // 血鈉由程式依指引判定，判讀器那一段不再重複
-  assert.equal((section.match(/血鈉/g) ?? []).length, 1);
-  // 程式沒有的項目才由判讀器補，並附中文對照
-  assert.match(section, /Mg（鎂）/);
+  // Na 由程式依指引判定，判讀器那一段不再重複列出
+  assert.equal((section.match(/^  Na：/gm) ?? []).length, 1);
+  // 程式沒有的項目才由判讀器補
+  assert.match(section, /^  Mg：/m);
 });
 
 test("醫師版檢驗項目一律英文縮寫在前，病人版一律中文在前", () => {
@@ -1929,8 +1929,8 @@ test("醫師版檢驗項目一律英文縮寫在前，病人版一律中文在�
     const head = line.trim().split("：")[0];
     assert.ok(/^[A-Za-z(]/.test(head), `醫師版項目名稱應以英文起始：${head}`);
   }
-  assert.match(section, /K（血鉀）/);
-  assert.match(section, /Mg（鎂）/);
+  assert.match(section, /^  K：/m);
+  assert.match(section, /^  Mg：/m);
   assert.ok(!section.includes("腎絲球過濾率"), "醫師版用 eGFR，不用中文全名");
 
   // 病人版相反：中文在前
@@ -1966,9 +1966,9 @@ test("醫師版的敘述句也用英文縮寫，不與清單相反", () => {
   for (const chinese of ["血鉀曾", "血鈉曾", "血色素曾", "糖化血色素 ", "血糖曾"]) {
     assert.ok(!section.includes(chinese), `敘述句不該用中文起頭：${chinese}`);
   }
-  assert.match(section, /K（血鉀）/);
-  assert.match(section, /Na（血鈉）/);
-  assert.match(section, /Hb（血色素）/);
+  assert.match(section, /K 曾出現/);
+  assert.match(section, /Na 曾出現/);
+  assert.match(section, /Hb 曾出現/);
   assert.match(section, /HbA1c/);
   assert.match(section, /Glucose 曾出現/);
 });
@@ -1990,7 +1990,7 @@ test("目標清單不重述指標名稱", () => {
     const zh = head.match(/（(.+)）/)?.[1] ?? head;
     assert.ok(!body.includes(zh), `目標值不該重述指標名稱：${line.trim()}`);
   }
-  assert.match(section, /TG（三酸甘油酯）：低於 150 mg\/dL/);
+  assert.match(section, /TG：低於 150 mg\/dL/);
   assert.match(section, /LDL-C：低於 70 mg\/dL/);
 
   // 指引原文本身不得被改寫——它是要給醫師核對的事實陳述

@@ -46,24 +46,28 @@ const ANALYTE_LABELS: Record<Analyte, string> = {
 };
 
 /**
- * 醫師版的項目名稱。檢驗報告本來就是印英文縮寫，eGFR／HbA1c／Na／K
- * 對醫師比「腎絲球過濾率」快。判讀器那一段也是英文在前，兩邊要一致——
- * 先前一邊中文優先、一邊英文優先，同一節裡兩種順序並存。
- * 病人版不用這一套，維持中文優先。
+ * 醫師版的項目名稱：一律用檢驗報告本來的名稱，不加中文對照。
+ *
+ * 為什麼不是「英文（中文）」：那需要一張涵蓋所有項目的對照表，而判讀器
+ * 回傳什麼名稱取決於各家醫院的原始資料（Glu.(Dipstick)、Albumin(Dipstick)
+ * 這類查不到中文），漏一個就又變成一半有、一半沒有。
+ * 「都沒有」是唯一保證得了的一致性，而且對醫師本來就夠。
+ * 病人版不用這一套，維持中文（英文縮寫）。
  */
 const CLINICIAN_LABELS: Record<Analyte, string> = {
   eGFR: "eGFR",
   UACR: "UACR",
   HbA1c: "HbA1c",
-  "fasting-glucose": "Glucose AC（飯前血糖）",
+  "fasting-glucose": "Glucose AC",
   "LDL-C": "LDL-C",
   "HDL-C": "HDL-C",
-  triglyceride: "TG（三酸甘油酯）",
-  creatinine: "Cr（肌酸酐）",
-  potassium: "K（血鉀）",
-  sodium: "Na（血鈉）",
-  haemoglobin: "Hb（血色素）",
-  "glucose-unspecified": "Glucose（未標示採檢時機）",
+  triglyceride: "TG",
+  creatinine: "Cr",
+  potassium: "K",
+  sodium: "Na",
+  haemoglobin: "Hb",
+  // 括號裡是限定條件不是翻譯，移到後面與筆數同一個括號
+  "glucose-unspecified": "Glucose",
 };
 
 type Matcher = {
@@ -268,7 +272,8 @@ export function describeRange(finding: AnalyteFinding): string {
 export function describeRangeForClinician(finding: AnalyteFinding): string {
   const months = finding.feeMonths.length ? `費用年月 ${finding.feeMonths.join("、")}` : "來源未提供年月";
   const distinct = new Set(finding.values.map((v) => v.raw)).size;
-  return `${CLINICIAN_LABELS[finding.analyte]}：${valueText(finding)}${cleanUnit(finding.unit)}（共 ${finding.values.length} 筆／${distinct} 種結果，${months}）`;
+  const caveat = finding.analyte === "glucose-unspecified" ? "未標示採檢時機，" : "";
+  return `${CLINICIAN_LABELS[finding.analyte]}：${valueText(finding)}${cleanUnit(finding.unit)}（${caveat}共 ${finding.values.length} 筆／${distinct} 種結果，${months}）`;
 }
 
 /**
@@ -375,7 +380,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       analyte: "potassium",
       ruleId: null,
       severity: potassium.min < 3.0 || potassium.max > 6.0 ? "urgent" : "attention",
-      clinicianMessage: `K（血鉀）曾出現${low ? "偏低" : "偏高"}數值（${detail}${rangeInline(potassium)} mmol/L）。${NOT_IN_GUIDELINE}`,
+      clinicianMessage: `K 曾出現${low ? "偏低" : "偏高"}數值（${detail}${rangeInline(potassium)} mmol/L）。${NOT_IN_GUIDELINE}`,
       patientMessage: `您的資料中曾出現${low ? "偏低" : "偏高"}的血鉀數值（${detail} mmol/L）。血鉀太${low ? "低" : "高"}可能影響心跳與肌肉力量${low ? "，利尿劑與腹瀉嘔吐都可能造成" : "，腎功能下降時較容易發生"}。這些紀錄沒有檢查日期，請在回診時主動提出。`,
       citation: null,
     });
@@ -389,7 +394,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       analyte: "sodium",
       ruleId: null,
       severity: "urgent",
-      clinicianMessage: `Na（血鈉）曾出現異常值（${detail}${rangeInline(sodium)} mmol/L）。${NOT_IN_GUIDELINE}`,
+      clinicianMessage: `Na 曾出現異常值（${detail}${rangeInline(sodium)} mmol/L）。${NOT_IN_GUIDELINE}`,
       patientMessage:
         "您的資料中曾出現異常的血鈉數值。這些紀錄沒有檢查日期，請在回診時主動提出，由醫療團隊確認目前狀況。",
       citation: null,
@@ -412,7 +417,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       ruleId: null,
       severity: hb.min < 8 ? "urgent" : "attention",
       // 糖化血色素失真由下面那一則專門處理，這裡不重複。
-      clinicianMessage: `Hb（血色素）曾出現 ${hb.min} g/dL${range(hb)}${kidneyImpaired ? "，合併腎功能不全，需考慮腎性貧血" : ""}。${NOT_IN_GUIDELINE}`,
+      clinicianMessage: `Hb 曾出現 ${hb.min} g/dL${range(hb)}${kidneyImpaired ? "，合併腎功能不全，需考慮腎性貧血" : ""}。${NOT_IN_GUIDELINE}`,
       patientMessage: `您的資料中曾出現偏低的血色素（${hb.min} g/dL），也就是貧血。${kidneyImpaired ? "腎功能下降的人比較容易發生貧血。" : ""}貧血可能讓您容易疲倦、喘或頭暈，也會讓糖化血色素這個指標看起來比實際情況好。請在回診時主動提出。`,
       citation: null,
     });

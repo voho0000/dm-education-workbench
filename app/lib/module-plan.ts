@@ -823,13 +823,13 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
   // 這是給醫師看的報告，目標值本來就由他決定，把程式的推理過程貼上去只是雜訊。
   // 目標名稱也用檢驗報告的縮寫，和第四節一致。
   const METRIC_LABEL: Record<string, string> = {
-    血壓: "BP（血壓）",
+    血壓: "BP",
     低密度脂蛋白膽固醇: "LDL-C",
     高密度脂蛋白膽固醇: "HDL-C",
-    三酸甘油酯: "TG（三酸甘油酯）",
+    三酸甘油酯: "TG",
     糖化血色素: "HbA1c",
-    空腹血糖: "Glucose AC（空腹血糖）",
-    餐後血糖: "Glucose PC（餐後血糖）",
+    空腹血糖: "Glucose AC",
+    餐後血糖: "Glucose PC",
   };
   const decided = plan.targets.targets.filter((item) => item.value);
   if (decided.length) {
