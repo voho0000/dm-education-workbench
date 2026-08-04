@@ -20,9 +20,27 @@ import {
   PR_MODERATE,
   resolvePlan,
 } from "../app/lib/module-plan.ts";
-import { selectSelfCareModules } from "../app/lib/self-care-modules.ts";
+import {
+  SELF_CARE_APPROVED,
+  SELF_CARE_MODULES,
+  SELF_CARE_VERSION,
+  selectSelfCareModules,
+} from "../app/lib/self-care-modules.ts";
 import { resolveTargets } from "../app/lib/resolve-targets.ts";
-import { GUIDELINE_RULES, RULES_BY_ID } from "../app/lib/guideline-rules.ts";
+import { GUIDELINE_RULES, RULES_APPROVED, RULES_BY_ID, RULES_VERSION } from "../app/lib/guideline-rules.ts";
+import {
+  BEHAVIOR_LABEL,
+  CATEGORY_LABEL,
+  CATEGORY_ORDER,
+  TOPIC_LABEL,
+  TYPE_GATE_LABEL,
+  VARIANT_WHEN_LABEL,
+} from "../app/lib/content-labels.ts";
+import {
+  EDUCATION_MODULES,
+  MODULE_CATALOG_APPROVED,
+  MODULE_CATALOG_VERSION,
+} from "../app/lib/education-modules.ts";
 import { parseLabReview, labSectionOf, LAB_REVIEW_PROMPT } from "../app/lib/lab-llm.ts";
 import { extractLabFindings, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
 import { parseLabNarrative, formatLabNarrative, LAB_NARRATIVE_PROMPT } from "../app/lib/lab-narrative.ts";
@@ -2406,4 +2424,41 @@ test("輸入估算要涵蓋三次呼叫，不能只算模組挑選那一次", ()
   assert.equal(input.totalChars, 100 + 200 + 300 + 400 + 500 + 600);
   // 每一段都要標出是哪一次呼叫，否則看不出成本花在哪
   assert.ok(input.parts.every((p) => /^[①②③]/.test(p.label)));
+});
+
+test("內容庫的中文標籤要蓋住所有實際出現的代碼，不得漏成生英文", () => {
+  for (const item of EDUCATION_MODULES) {
+    assert.ok(TOPIC_LABEL[item.topic], `主題代碼 ${item.topic} 沒有中文標籤`);
+    assert.ok(TYPE_GATE_LABEL[item.typeGate], `型別條件 ${item.typeGate} 沒有中文標籤`);
+  }
+  for (const item of SELF_CARE_MODULES) {
+    assert.ok(BEHAVIOR_LABEL[item.behavior], `自我照護行為 ${item.behavior} 沒有中文標籤`);
+    for (const variant of item.definiteVariants ?? []) {
+      assert.ok(VARIANT_WHEN_LABEL[variant.when], `替換條件 ${variant.when} 沒有中文標籤`);
+    }
+  }
+  for (const rule of GUIDELINE_RULES) {
+    assert.ok(CATEGORY_LABEL[rule.category], `規則類別 ${rule.category} 沒有中文標籤`);
+  }
+});
+
+test("內容庫的顯示順序不得漏掉任何一組規則", () => {
+  // CATEGORY_ORDER 只管順序。漏列一個類別就是整組規則從畫面上消失，
+  // 而審閱的人看不出少了什麼——所以順序表必須蓋滿實際用到的類別。
+  const used = new Set(GUIDELINE_RULES.map((rule) => rule.category));
+  const missing = [...used].filter((category) => !CATEGORY_ORDER.includes(category));
+  assert.deepEqual(missing, [], `這些類別沒排進顯示順序：${missing.join("、")}`);
+
+  const covered = GUIDELINE_RULES.filter((rule) => CATEGORY_ORDER.includes(rule.category));
+  assert.equal(covered.length, GUIDELINE_RULES.length, "有規則不會被顯示");
+});
+
+test("三份固定內容都標了版本，且未核准前不得標成已核准", () => {
+  for (const version of [MODULE_CATALOG_VERSION, SELF_CARE_VERSION, RULES_VERSION]) {
+    assert.match(version, /\S/, "版本字串不得為空");
+  }
+  // 目前三份都還沒送審通過。哪天真的核准了，這裡要一起改，才不會悄悄變成「已核准」。
+  assert.equal(MODULE_CATALOG_APPROVED, false);
+  assert.equal(SELF_CARE_APPROVED, false);
+  assert.equal(RULES_APPROVED, false);
 });

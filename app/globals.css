@@ -317,6 +317,113 @@ textarea { font-family: inherit; resize: vertical; }
   font-size: 12px; line-height: 1.75;
 }
 
+/* ── 內容庫 ───────────────────────────────────────────── */
+.libraryStatus { margin: 14px 0 0; }
+.libraryBadge {
+  display: inline-flex; align-items: center; gap: 6px;
+  padding: 5px 12px;
+  border-radius: 999px;
+  font-size: 11px; font-weight: 750; letter-spacing: 0.03em;
+}
+.libraryBadgeDraft { color: #67451e; background: #f7e9cd; }
+.libraryBadgeOk { color: var(--teal-dark); background: var(--teal-soft); }
+
+/* 內容很長。給固定高度並自己捲動，讓下面的提醒與頁尾不會被推到看不見的地方。 */
+.libraryScroll {
+  margin: 14px 0 0;
+  max-height: 640px;
+  padding: 4px 16px 4px 4px;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.libraryScroll > .fieldNote { margin: 0 0 16px; }
+
+.libraryItem {
+  margin: 0 0 12px;
+  padding: 16px 18px;
+  border: 1px solid var(--line); border-radius: 12px;
+  background: white;
+}
+.libraryItemHead { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.libraryItemHead h3 { margin: 0; color: var(--ink); font-size: 15px; font-weight: 750; }
+.libraryItemHead code {
+  color: var(--muted); font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.libraryTag {
+  padding: 3px 9px;
+  border-radius: 999px;
+  background: var(--paper); color: var(--muted);
+  font-size: 11px; font-weight: 650;
+}
+.libraryMeta { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.7; }
+.libraryBody {
+  margin: 10px 0 0;
+  color: #2c424a; font-size: 13px; line-height: 1.9;
+  white-space: pre-wrap;
+}
+.libraryUrgent {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border-left: 3px solid var(--danger); border-radius: 0 8px 8px 0;
+  background: rgba(168, 60, 53, 0.05);
+  color: #7c332e; font-size: 12px; line-height: 1.8;
+  white-space: pre-wrap;
+}
+.libraryUrgent strong { display: block; margin: 0 0 4px; font-size: 11px; letter-spacing: 0.04em; }
+
+.libraryVariants {
+  margin: 12px 0 0;
+  padding: 10px 14px;
+  border: 1px dashed var(--line); border-radius: 10px;
+}
+.libraryVariants strong { display: block; color: var(--muted); font-size: 11px; letter-spacing: 0.04em; }
+.libraryVariants p {
+  margin: 8px 0 0;
+  display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
+  color: #2c424a; font-size: 12px; line-height: 1.8;
+}
+.libraryVariantFrom { color: var(--muted); text-decoration: line-through; }
+.libraryVariantArrow { color: var(--teal); font-weight: 750; }
+
+.librarySubhead {
+  margin: 26px 0 12px;
+  display: flex; align-items: center; gap: 8px;
+  color: var(--ink); font-size: 13px; font-weight: 750; letter-spacing: 0.03em;
+}
+.libraryCount {
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--paper); color: var(--muted);
+  font-size: 11px; font-weight: 650;
+}
+.libraryGroup { margin: 0 0 8px; }
+
+/* 表格比卡片寬得多，讓它自己橫向捲，不要撐破頁面。 */
+.libraryTableWrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 12px; background: white; }
+.libraryTable { width: 100%; min-width: 720px; border-collapse: collapse; }
+.libraryTable th, .libraryTable td {
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  text-align: left; vertical-align: top;
+  font-size: 12px; line-height: 1.75;
+}
+.libraryTable th {
+  color: var(--muted); font-size: 11px; font-weight: 700; letter-spacing: 0.04em;
+  background: var(--paper);
+  white-space: nowrap;
+}
+.libraryTable td { color: #2c424a; }
+.libraryTable tr:last-child td { border-bottom: 0; }
+.libraryTable td code {
+  display: block; margin: 0 0 3px;
+  color: var(--teal-dark); font-size: 11px;
+  font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
+}
+.libraryTable td span { color: var(--muted); }
+.libraryCitation { color: var(--muted); white-space: nowrap; }
+.libraryMuted { color: var(--muted); font-style: italic; }
+
 /* ── 提醒與頁尾 ───────────────────────────────────────── */
 .safetyNote {
   width: var(--page);

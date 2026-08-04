@@ -2,6 +2,7 @@
 
 import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { BUILD_ID } from "./build-id";
+import { ContentLibrary } from "./content-library";
 import { hasHardBlocker, runBlockers, type Blocker } from "./lib/blockers";
 import { buildRunInput, type ComposedInput } from "./lib/build-input";
 import { MODULE_CATALOG_VERSION } from "./lib/education-modules";
@@ -803,6 +804,8 @@ export default function Home() {
         <textarea className="promptEditor" value={activePrompt.text} readOnly spellCheck={false} />
         </div>
       </article>
+
+      <ContentLibrary />
 
       <section className="safetyNote">
         <span className="safetyIcon">i</span>

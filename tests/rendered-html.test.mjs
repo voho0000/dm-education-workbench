@@ -52,6 +52,25 @@ test("首頁畫出實際的資料流：程式判定為主，三次 LLM 呼叫", 
   assert.match(html, /由程式定義並隨版本一起送審，不在頁面上編輯/);
 });
 
+test("三份固定內容攤在頁面上，逐條看得到，且標明未核准", async () => {
+  const html = await (await render()).text();
+
+  assert.match(html, /報告會用到的固定內容/);
+  assert.match(html, /衛教模組 draft-0\.2/);
+  assert.match(html, /自我照護模組 draft-0\.1/);
+  assert.match(html, /指引門檻表 2022-guideline-extract-0\.2/);
+  assert.match(html, /DRAFT・未經醫療團隊核准/);
+
+  // 不是只列標題——正文要真的在頁面上，才能拿去逐條審。
+  // 分頁只渲染當前那一頁，所以這裡只能驗預設頁（衛教模組）的正文；
+  // 另兩頁的內容由 lib.test.mjs 的資料測試把關。
+  assert.match(html, /關於這份報告/);
+  assert.match(html, /每天查看腳背、腳底、腳趾縫與腳跟/);
+
+  // 門檻表要標明來源，才知道是依哪一份指引
+  assert.match(html, /中華民國糖尿病學會/);
+});
+
 test("A/B/C 比較與指引全文載入已從流程移除", async () => {
   const html = await (await render()).text();
 
