@@ -23,7 +23,7 @@ import { SELF_CARE_BY_ID, SELF_CARE_VERSION, selectSelfCareModules } from "./sel
 import { RULES_VERSION, RULES_SOURCE, RULES_BY_ID, citationShort } from "./guideline-rules.ts";
 import { resolveTargets, type ResolvedPlanTargets } from "./resolve-targets.ts";
 import type { PatientFacts } from "./patient-facts.ts";
-import { SHARED_CARE_BLOCKS, followUpSchedule } from "./shared-care.ts";
+import { SHARED_CARE_BLOCKS, followUpForClinician, followUpSchedule } from "./shared-care.ts";
 import {
   describeRange,
   describeRangeForClinician,
@@ -869,6 +869,14 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
       lines.push(`  [異議] ${item.topic}｜程式：${item.program_decision}`);
       lines.push(`    LLM：${item.your_view}`);
     }
+    lines.push("");
+  }
+
+  // 追蹤間隔是醫師要開單的依據，先前只出現在病人版，而且病人版用的是
+  // 白話說法（「每年做一次足部感覺檢查」）。醫師版用原本的事實陳述並附出處。
+  if (plan.followUp.rules.length) {
+    lines.push(section("依指引的追蹤間隔"));
+    lines.push(...followUpForClinician(plan.followUp.rules));
     lines.push("");
   }
 

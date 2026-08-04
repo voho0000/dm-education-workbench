@@ -778,7 +778,10 @@ test("同一條指引規則不得在安全提示中出現兩次", () => {
     dataCutoff: "2026-08-03",
   });
 
-  const section = report.slice(report.indexOf("需核實的檢驗結果"), report.indexOf("、檢驗結果"));
+  // 只看「需核實」這一節。追蹤間隔那一節也會列腎臟每半年，但那不是重複——
+  // 一個是「這位病人的數值達到門檻」，一個是「排程該怎麼開」，少了後者排程表
+  // 就沒有腎臟那一列。
+  const section = report.slice(report.indexOf("需核實的檢驗結果"), report.indexOf("依指引的追蹤間隔"));
   const halfYear = (section.match(/至少每半年監測追蹤一次/g) ?? []).length;
   assert.equal(halfYear, 1, "腎臟加密追蹤規則只能出現一次");
 
@@ -1996,4 +1999,36 @@ test("目標清單不重述指標名稱", () => {
   // 指引原文本身不得被改寫——它是要給醫師核對的事實陳述
   const tg = GUIDELINE_RULES.find((r) => r.id === "tg-target");
   assert.equal(tg.statement, "三酸甘油酯目標為低於 150 mg/dL；達到或超過 500 mg/dL 時需藥物處理。");
+});
+
+test("醫師版有依指引的追蹤間隔，且用事實陳述與出處", () => {
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23", R1: 2, R4: 2, CKD: 1 },
+    rawSources: {
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      labData: {
+        rObject: [{ fee_ym: "202512", assay_item_name: "eGFR", assay_value: "34.6", unit_data: "ml/min/1.73m2" }],
+      },
+    },
+  });
+  const plan = resolvePlan(null, facts);
+  const clinician = assembleClinicianReport(plan, facts, { reportDate: "2026-08-04", dataCutoff: null });
+  const section = clinician.slice(clinician.indexOf("依指引的追蹤間隔"), clinician.indexOf("、檢驗結果"));
+
+  assert.ok(plan.followUp.rules.length > 0);
+  // 醫師版用原本的事實陳述（含檢查技術名稱），病人版才用白話說法
+  assert.match(section, /單股纖維壓覺/);
+  // 每一條都要能追到出處
+  for (const line of section.split("\n").filter((l) => /^\s{2}\S/.test(l) && !/^\s*[一二三四五六七]、/.test(l))) {
+    assert.match(line, /〔.+p\.\d+〕/, `追蹤間隔缺出處：${line.trim()}`);
+  }
+  // statement 沒有主詞的才補，有主詞的不重述
+  assert.match(section, /腎功能與尿液白蛋白：至少每半年/);
+  assert.ok(!/腎功能與尿液白蛋白：肌酸酐/.test(section));
+
+  // 病人版仍是白話說法
+  const patient = assemblePatientReport(plan, { reportDate: "2026-08-04", dataCutoff: null });
+  assert.ok(!patient.includes("單股纖維壓覺"));
+  assert.match(patient, /建議每年做一次足部感覺檢查/);
 });

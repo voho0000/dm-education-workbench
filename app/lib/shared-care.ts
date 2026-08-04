@@ -10,7 +10,7 @@
  * 追蹤時程不再用散文重複，改成由 guideline-rules 產生的單一清單。
  */
 
-import { GUIDELINE_RULES, citationText, type GuidelineRule } from "./guideline-rules.ts";
+import { GUIDELINE_RULES, citationShort, type GuidelineRule } from "./guideline-rules.ts";
 
 export type SharedBlock = {
   id: string;
@@ -86,7 +86,10 @@ export function followUpSchedule(
   const rules = GUIDELINE_RULES.filter((rule) => wanted.has(rule.id) && rule.patientFacing);
   if (!rules.length) return { rules: [], text: "" };
 
-  const SUBJECT: Record<string, string> = {
+  return { rules, text: buildText(rules) };
+}
+
+const SUBJECT: Record<string, string> = {
     "interval-hba1c": "血糖控制指標",
     "interval-lipid": "血脂",
     "interval-kidney": "腎功能與尿液檢查",
@@ -95,20 +98,39 @@ export function followUpSchedule(
     "interval-retina-followup": "眼底檢查",
     "interval-neuropathy": "神經與足部感覺",
     "interval-foot": "足部循環",
-    "kidney-intensive-followup": "腎功能與尿液檢查（您的檢查結果顯示需要加強追蹤）",
-  };
+  "kidney-intensive-followup": "腎功能與尿液檢查（您的檢查結果顯示需要加強追蹤）",
+};
+
+/** 病人版：白話說法，不夾帶檢查技術名稱。 */
+function buildText(rules: GuidelineRule[]): string {
+  if (!rules.length) return "";
   const lines = rules.map(
     (rule, index) => `${index + 1}. ${SUBJECT[rule.id] ?? ""}：${rule.patientStatement ?? rule.statement}`,
   );
-  return {
-    rules,
-    text: `${lines.join("\n")}
+  return `${lines.join("\n")}
 
-實際的檢查時間由醫療團隊依您的狀況安排，上面是一般的參考間隔。`,
-  };
+實際的檢查時間由醫療團隊依您的狀況安排，上面是一般的參考間隔。`;
 }
 
-/** 追蹤時程的出處，只放在醫師版。 */
-export function scheduleCitations(rules: GuidelineRule[]): string {
-  return rules.map((rule) => `${rule.id}：${citationText(rule)}`).join("\n");
+/**
+ * 醫師版的主詞。多數 statement 本身就帶主詞（「血脂建議每年檢查一次」），
+ * 只有少數沒有（腎臟加強追蹤是「至少每半年監測追蹤一次」，看不出在講什麼）。
+ * 只在 statement 沒提到主詞時才補，否則會變成重述。
+ */
+const CLINICIAN_SUBJECT: Record<string, string> = {
+  "kidney-intensive-followup": "腎功能與尿液白蛋白",
+};
+
+/**
+ * 醫師版：用原本的事實陳述（含檢查技術名稱），並逐條附出處。
+ * 這是要開單的依據，不能只給病人版的白話說法。
+ */
+export function followUpForClinician(rules: GuidelineRule[]): string[] {
+  return rules.map((rule) => {
+    const subject = CLINICIAN_SUBJECT[rule.id];
+    const prefix = subject ? `${subject}：` : "";
+    return `  ${prefix}${rule.statement}　〔${citationShort(rule)}〕`;
+  });
 }
+
+
