@@ -90,6 +90,29 @@ export function compareToTargets(findings: AnalyteFinding[], facts: PatientFacts
     });
   }
 
+  // ── 餐後血糖 ──
+  // 指引有 80–160 的目標，先前沒有對應的 analyte，所以這個目標從來沒被比對過。
+  const postprandial = get("postprandial-glucose");
+  if (postprandial) {
+    const worst = postprandial.max;
+    const outOfTarget = worst > 160;
+    results.push({
+      analyte: "postprandial-glucose",
+      label: "餐後血糖",
+      worst,
+      target: "80–160 mg/dL",
+      outOfTarget,
+      severity: worst >= 250 ? "attention" : "info",
+      clinicianMessage: `Glucose PC 曾出現 ${postprandial.min}–${postprandial.max} mg/dL${outOfTarget ? "，最高超過目標上限 160" : ""}。`,
+      patientMessage: outOfTarget
+        ? `您的資料中曾出現偏高的餐後血糖（最高 ${worst} mg/dL）。這些紀錄沒有附檢查日期，請在回診時和醫療團隊一起看實際結果。`
+        : null,
+      citation: cite("ppg-general"),
+      citationShort: citeShort("ppg-general"),
+      targetNeedsConfirmation: elderly,
+    });
+  }
+
   // ── 飯前血糖 ──
   const fasting = get("fasting-glucose");
   if (fasting) {

@@ -704,30 +704,30 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
     lines.push("");
   }
 
-  if (plan.labNoteEntries.length) {
+  // 沒有配對到任何數值的提醒（例如「資料中沒有 HbA1c 紀錄」、低血糖跨了兩種
+  // 血糖項目）也必須印出來。先前整段包在 labNoteEntries.length 裡，數值全部
+  // 被嵌進器官段落時 labNoteEntries 是空的，這些提醒就跟著消失了。
+  const pairedMessages = new Set([
+    ...plan.labNoteEntries.flatMap((entry) => entry.messages),
+    ...Object.values(plan.labEntriesByModule).flatMap((entries) => entries.flatMap((entry) => entry.messages)),
+  ]);
+  const looseMessages = [
+    ...plan.labPatientMessages.filter((message) => !pairedMessages.has(message)),
+    ...outOfTargetOnly(plan.targetComparisons)
+      .map((item) => item.patientMessage)
+      .filter((message): message is string => Boolean(message))
+      .filter((message) => !pairedMessages.has(message)),
+  ];
+
+  if (plan.labNoteEntries.length || looseMessages.length) {
     section(lines, "您的其他檢驗數值");
-    // 說明緊接在它所解釋的那個數值下面。先前是數值列一區、說明列一區，
-    // 中間隔著別的數值，等於要病人自己配對。
     plan.labNoteEntries.forEach((entry) => {
       lines.push(`・${entry.text}`);
       for (const message of entry.messages) lines.push(`   ${message}`);
     });
-    lines.push("");
-    // 沒有對應到單一檢驗項目的判定（例如低血糖跨了兩種血糖項目）另外列。
-    // 已經貼在器官段落數值旁邊的也算配對過了，否則同一句會出現兩次。
-    const paired = new Set([
-      ...plan.labNoteEntries.flatMap((entry) => entry.messages),
-      ...Object.values(plan.labEntriesByModule).flatMap((entries) => entries.flatMap((entry) => entry.messages)),
-    ]);
-    for (const message of plan.labPatientMessages) {
-      if (!paired.has(message)) lines.push(message, "");
-    }
-    // 每一個超出目標的指標都要有提示，覆蓋不能只挑幾項。
-    for (const item of outOfTargetOnly(plan.targetComparisons)) {
-      if (item.patientMessage) lines.push(item.patientMessage, "");
-    }
+    if (plan.labNoteEntries.length) lines.push("");
+    for (const message of looseMessages) lines.push(message, "");
   }
-
 
   if (plan.followUp.text) {
     section(lines, "追蹤時程");
@@ -855,23 +855,39 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
   const offTarget = outOfTargetOnly(plan.targetComparisons);
   if (plan.targets.safetyFlags.length || plan.labThresholds.length || offTarget.length || disagreements.length) {
     lines.push(section("需核實的檢驗結果"));
+    // 依嚴重度排，不依插入順序——先前 [參考] 會排在 [優先核實] 前面。
+    const RANK = { urgent: 0, attention: 1, info: 2 } as const;
+    const rows: Array<{ severity: "info" | "attention" | "urgent"; text: string }> = [];
     for (const item of offTarget) {
-      lines.push(`  [${SEVERITY_LABEL[item.severity]}] ${item.clinicianMessage}${item.citationShort ? `　〔${item.citationShort}〕` : ""}`);
+      rows.push({
+        severity: item.severity,
+        text: `${item.clinicianMessage}${item.citationShort ? `　〔${item.citationShort}〕` : ""}`,
+      });
     }
     // 由實際數值觸發的門檻判定排在最前面，因為它們最具體。
     for (const hit of plan.labThresholds) {
       const rule = hit.ruleId ? RULES_BY_ID.get(hit.ruleId) : undefined;
-      lines.push(`  [${SEVERITY_LABEL[hit.severity]}] ${hit.clinicianMessage}${rule ? `　〔${citationShort(rule)}〕` : ""}`);
+      rows.push({
+        severity: hit.severity,
+        text: `${hit.clinicianMessage}${rule ? `　〔${citationShort(rule)}〕` : ""}`,
+      });
     }
     // 帶實際數值的判定已經涵蓋通則版本，兩則並列等於同一件事講兩次。
-    const supersededFlags = plan.labThresholds.some((hit) => hit.code === "hba1c-unreliable")
-      ? new Set(["hba1c-reliability"])
-      : new Set<string>();
+    // 具體那則（帶實際數值）涵蓋通則版；完全沒有 HbA1c 時談它可不可信也沒有意義。
+    const supersededFlags =
+      plan.labThresholds.some((hit) => hit.code === "hba1c-unreliable" || hit.code === "hba1c-missing")
+        ? new Set(["hba1c-reliability"])
+        : new Set<string>();
     for (const flag of plan.targets.safetyFlags) {
       if (supersededFlags.has(flag.code)) continue;
       const rule = flag.ruleId ? RULES_BY_ID.get(flag.ruleId) : undefined;
-      lines.push(`  [${SEVERITY_LABEL[flag.severity]}] ${flag.message}${rule ? `　〔${citationShort(rule)}〕` : ""}`);
+      rows.push({
+        severity: flag.severity,
+        text: `${flag.message}${rule ? `　〔${citationShort(rule)}〕` : ""}`,
+      });
     }
+    rows.sort((a, b) => RANK[a.severity] - RANK[b.severity]);
+    for (const row of rows) lines.push(`  [${SEVERITY_LABEL[row.severity]}] ${row.text}`);
     // 輔助判讀器對程式判定的異議很少出現；一旦出現就是需要人看的訊號。
     for (const item of disagreements) {
       lines.push(`  [異議] ${item.topic}｜程式：${item.program_decision}`);

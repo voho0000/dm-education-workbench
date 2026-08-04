@@ -21,6 +21,7 @@ export type Analyte =
   | "UACR"
   | "HbA1c"
   | "fasting-glucose"
+  | "postprandial-glucose"
   | "LDL-C"
   | "HDL-C"
   | "triglyceride"
@@ -35,6 +36,7 @@ const ANALYTE_LABELS: Record<Analyte, string> = {
   UACR: "尿液白蛋白／肌酸酐比值（UACR）",
   HbA1c: "糖化血色素（HbA1c）",
   "fasting-glucose": "飯前血糖",
+  "postprandial-glucose": "餐後血糖",
   "LDL-C": "低密度脂蛋白膽固醇（LDL-C）",
   "HDL-C": "高密度脂蛋白膽固醇（HDL-C）",
   triglyceride: "三酸甘油酯",
@@ -59,6 +61,7 @@ const CLINICIAN_LABELS: Record<Analyte, string> = {
   UACR: "UACR",
   HbA1c: "HbA1c",
   "fasting-glucose": "Glucose AC",
+  "postprandial-glucose": "Glucose PC",
   "LDL-C": "LDL-C",
   "HDL-C": "HDL-C",
   triglyceride: "TG",
@@ -79,6 +82,15 @@ type Matcher = {
   excludeName?: RegExp;
   /** 醫令代碼落在此範圍時排除（例如尿液檢查） */
   excludeOrderCodes?: RegExp;
+  /**
+   * 醫令代碼符合時直接採用，不再要求名稱相符。
+   *
+   * 名稱寫法各院不同（Glu-AC、GLU_AC、Sugar(One touch)、血液及體液葡萄糖），
+   * 靠正則列舉一定會漏。實測漏掉一位病人 63 筆 Glu-AC，其中含 20 mg/dL，
+   * 導致報告寫「最低 68」而真正的最低值是 20——那是第二級低血糖。
+   * 醫令代碼是健保定義的，比名稱可靠。
+   */
+  includeOrderCodes?: RegExp;
 };
 
 /**
@@ -92,7 +104,15 @@ const MATCHERS: Matcher[] = [
   {
     // 只有名稱明確標示空腹／AC／飯前，才套用空腹血糖目標。
     analyte: "fasting-glucose",
-    name: /(Glucose\s*AC|Glucose\(AC\)|Sugar\s*AC|空腹|飯前)/i,
+    name: /(Glu(cose)?[-_\s]*AC|Glucose\(AC\)|Sugar[-_\s]*AC|空腹|飯前)/i,
+    unit: /mg\s*\/?\s*d[lL]/i,
+    excludeOrderCodes: /^(06012C|06013C)$/,
+  },
+  {
+    // 餐後血糖有自己的指引目標（80–160），先前完全沒有對應的 analyte，
+    // 所以 Glu-PC 208 這種超標值不會被比對到。
+    analyte: "postprandial-glucose",
+    name: /(Glu(cose)?[-_\s]*PC|Sugar[-_\s]*PC|餐後|飯後)/i,
     unit: /mg\s*\/?\s*d[lL]/i,
     excludeOrderCodes: /^(06012C|06013C)$/,
   },
@@ -111,6 +131,8 @@ const MATCHERS: Matcher[] = [
     excludeName: /estimated\s+average\s+glucose|\beAG\b/i,
     unit: /mg\s*\/?\s*d[lL]/i,
     excludeOrderCodes: /^(06012C|06013C)$/,
+    // 09005C／09140C 是健保的「血液及體液葡萄糖」，名稱怎麼寫都算血糖。
+    includeOrderCodes: /^(09005C|09140C)$/,
   },
   { analyte: "LDL-C", name: /LDL[-\s]?(cholesterol|Cho)/i, unit: /mg\s*\/?\s*d[lL]/i },
   { analyte: "HDL-C", name: /HDL[-\s]?(cholesterol|Cho)/i, unit: /mg\s*\/?\s*d[lL]/i },
@@ -170,7 +192,10 @@ export type AnalyteFinding = {
 
 function matches(item: LabItemFact): Analyte | null {
   for (const matcher of MATCHERS) {
-    if (!matcher.name.test(item.itemName)) continue;
+    const byCode = matcher.includeOrderCodes
+      ? item.orderCodes.some((code) => matcher.includeOrderCodes!.test(code))
+      : false;
+    if (!byCode && !matcher.name.test(item.itemName)) continue;
     if (matcher.excludeName?.test(item.itemName)) continue;
     if (matcher.excludeOrderCodes && item.orderCodes.some((code) => matcher.excludeOrderCodes!.test(code))) continue;
     if (matcher.unit && !(item.unit && matcher.unit.test(item.unit))) continue;
@@ -185,7 +210,12 @@ function matches(item: LabItemFact): Analyte | null {
  */
 export function lowestMeasuredGlucose(findings: AnalyteFinding[]): number | null {
   const values = findings
-    .filter((item) => item.analyte === "fasting-glucose" || item.analyte === "glucose-unspecified")
+    .filter(
+      (item) =>
+        item.analyte === "fasting-glucose" ||
+        item.analyte === "postprandial-glucose" ||
+        item.analyte === "glucose-unspecified",
+    )
     .map((item) => item.min);
   return values.length ? Math.min(...values) : null;
 }
@@ -235,7 +265,8 @@ function cleanUnit(unit: string | null): string {
   if (!unit) return "";
   const text = unit.trim();
   if (!text || /^(無|未提供|N\/A|null)$/i.test(text)) return "";
-  return ` ${text}`;
+  // 來源的上標字元常是亂碼（m︿2、m^2、m2），統一成 m²
+  return ` ${text.replace(/m\s*[︿^]\s*2|(?<=\d\.\d{2})m2\b/gi, "m²")}`;
 }
 
 /**
@@ -312,6 +343,9 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
   const get = (analyte: Analyte) => findings.find((item) => item.analyte === analyte);
   /** 只有真的是一段範圍時才印，否則會出現「範圍 124–124」這種贅字。 */
   const range = (item: AnalyteFinding) => (item.min === item.max ? "" : `（範圍 ${item.min}–${item.max}）`);
+  /** 落在指定區間內的實際數值。「介於 30–45（43.3–115.7）」裡的 115.7 不在區間內，讀起來自相矛盾。 */
+  const within = (item: AnalyteFinding, lo: number, hi: number) =>
+    [...new Set(item.values.filter((v) => v.value >= lo && v.value < hi).map((v) => v.raw))].join("、");
   /** 已經在括號裡時用這個，否則會出現「（最低 3.3（範圍 3.3–4.8））」這種巢狀括號。 */
   const rangeInline = (item: AnalyteFinding) => (item.min === item.max ? "" : `，範圍 ${item.min}–${item.max}`);
 
@@ -326,7 +360,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
   const uacrAbove300 = uacr && uacr.values.some((v) => v.value > 300 || (v.value === 300 && v.qualifier === ">="));
   if (egfrBelow60 || uacrAbove300) {
     const parts: string[] = [];
-    if (egfrBelow60) parts.push(`eGFR 曾出現低於 60 的數值（${egfr.min}–${egfr.max}）`);
+    if (egfrBelow60) parts.push(`eGFR 曾出現低於 60 的數值（${within(egfr, 0, 60)}）`);
     if (uacrAbove300) parts.push(`UACR 曾出現達到或超過 300 mg/g 的結果（${[...new Set(uacr.values.map((v) => v.raw))].join("、")}）`);
     const r = rule("kidney-intensive-followup");
     hits.push({
@@ -399,7 +433,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
         analyte: "eGFR",
         ruleId: "metformin-egfr-30-45",
         severity: "attention",
-        clinicianMessage: `eGFR 曾出現介於 30–45 的數值（${egfr.min}–${egfr.max}）。${r?.statement ?? ""}`,
+        clinicianMessage: `eGFR 曾出現介於 30–45 的數值（${within(egfr, 30, 45)}）。${r?.statement ?? ""}`,
         patientMessage: null,
         citation: r?.citation ?? null,
       });
@@ -470,6 +504,18 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
   // 改為連最高的一筆都低於 11（貧血是持續狀態），或有腎功能不全。
   const persistentAnaemia = Boolean(hb && hb.max < 11);
   const a1c = get("HbA1c");
+  if (!a1c) {
+    hits.push({
+      code: "hba1c-missing",
+      analyte: "HbA1c",
+      ruleId: "interval-hba1c",
+      severity: "attention",
+      clinicianMessage: "資料中沒有糖化血色素紀錄。",
+      patientMessage:
+        "您的資料中沒有糖化血色素（HbA1c）的紀錄。這是評估一段期間血糖控制的指標，回診時可以確認是否需要安排。",
+      citation: rule("interval-hba1c")?.citation ?? null,
+    });
+  }
   if (a1c && (kidneyImpaired || persistentAnaemia)) {
     hits.push({
       code: "hba1c-unreliable",
@@ -484,7 +530,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
 
   // 低血糖：任何一筆血糖低於 70 都要被看到，低於 54 屬臨床上的嚴重低血糖。
   // 這比高血糖更急，卻最容易被「只看平均值」的做法漏掉。
-  const anyGlucose = [get("fasting-glucose"), get("glucose-unspecified")].filter(
+  const anyGlucose = [get("fasting-glucose"), get("postprandial-glucose"), get("glucose-unspecified")].filter(
     (item): item is AnalyteFinding => Boolean(item),
   );
   const lowest = anyGlucose.length ? Math.min(...anyGlucose.map((item) => item.min)) : null;

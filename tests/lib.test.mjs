@@ -23,6 +23,7 @@ import { selectSelfCareModules } from "../app/lib/self-care-modules.ts";
 import { resolveTargets } from "../app/lib/resolve-targets.ts";
 import { GUIDELINE_RULES, RULES_BY_ID } from "../app/lib/guideline-rules.ts";
 import { parseLabReview, labSectionOf, LAB_REVIEW_PROMPT } from "../app/lib/lab-llm.ts";
+import { extractLabFindings, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
 
 const baseState = {
@@ -2079,4 +2080,104 @@ test("沒有腎臟問題時，單一電解質異常不得觸發腎臟科轉介",
     },
   });
   assert.ok(resolvePlan(null, withCkd).labThresholds.some((h) => h.code === "referral-nephrology"));
+});
+
+test("血糖以醫令代碼判定，名稱寫法不影響", () => {
+  // 實測漏抓：一位病人有 63 筆 Glu-AC（醫令 09005C），含 20 mg/dL，
+  // 但名稱正則只認 Glucose AC／空腹／飯前，整批漏掉。報告因此寫
+  // 「最低 68」，而真正的最低是 20——第二級低血糖。
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "09005C", assay_item_name: "Glu-AC", assay_value: "20", unit_data: "mg/dL" },
+          { fee_ym: "202512", order_code: "09005C", assay_item_name: "GLU_AC", assay_value: "184", unit_data: "mg/dL" },
+          { fee_ym: "202512", order_code: "09140C", assay_item_name: "Glu-PC", assay_value: "208", unit_data: "mg/dL" },
+          // 尿糖：醫令 06012C，不得混入
+          { fee_ym: "202512", order_code: "06012C", assay_item_name: "Urine Sugar(qualitative)", assay_value: "250", unit_data: "mg/dL" },
+        ],
+      },
+    },
+  });
+  const findings = extractLabFindings(facts);
+  const byAnalyte = Object.fromEntries(findings.map((f) => [f.analyte, f]));
+
+  assert.ok(byAnalyte["fasting-glucose"], "Glu-AC 應被判為飯前血糖");
+  assert.equal(byAnalyte["fasting-glucose"].min, 20);
+  assert.ok(byAnalyte["postprandial-glucose"], "Glu-PC 應被判為餐後血糖");
+  assert.equal(byAnalyte["postprandial-glucose"].max, 208);
+  assert.equal(lowestMeasuredGlucose(findings), 20);
+
+  const plan = resolvePlan(null, facts);
+  const hypo = plan.labThresholds.find((h) => h.code === "hypoglycemia");
+  assert.equal(hypo.severity, "urgent", "低於 54 屬第二級低血糖");
+  assert.match(hypo.clinicianMessage, /20 mg\/dL/);
+
+  // 餐後 208 超過指引目標 160，先前沒有對應 analyte 所以從來不會被比對
+  const ppg = plan.targetComparisons.find((c) => c.analyte === "postprandial-glucose");
+  assert.ok(ppg?.outOfTarget);
+  assert.match(ppg.clinicianMessage, /超過目標上限 160/);
+
+  // 尿糖 250 不得被當成血糖
+  for (const f of findings) {
+    assert.ok(!/urine|尿/i.test(f.label), `尿液項目不該被納入：${f.label}`);
+  }
+  assert.ok(!findings.some((f) => f.values.some((v) => v.value === 250)));
+});
+
+test("需核實依嚴重度排序，區間敘述只列符合的數值，單位亂碼要清掉", () => {
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23" },
+    rawSources: {
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      labData: {
+        rObject: [
+          { fee_ym: "202512", assay_item_name: "eGFR", assay_value: "43.3", unit_data: "mL/min/1.73m︿2" },
+          { fee_ym: "202512", assay_item_name: "eGFR", assay_value: "115.7", unit_data: "mL/min/1.73m︿2" },
+          { fee_ym: "202512", order_code: "09005C", assay_item_name: "Glu-AC", assay_value: "20", unit_data: "mg/dL" },
+        ],
+      },
+    },
+  });
+  const report = assembleClinicianReport(resolvePlan(null, facts), facts, {
+    reportDate: "2026-08-04",
+    dataCutoff: null,
+  });
+  const section = report.slice(report.indexOf("需核實的檢驗結果"), report.indexOf("、檢驗結果"));
+
+  // 「介於 30–45（43.3–115.7）」裡的 115.7 不在區間內，讀起來自相矛盾
+  assert.match(section, /介於 30–45 的數值（43\.3）/);
+  assert.match(section, /低於 60 的數值（43\.3）/);
+
+  // 嚴重度由重到輕
+  const order = [...section.matchAll(/\[(優先核實|留意|參考)\]/g)].map((m) => m[1]);
+  const rank = { 優先核實: 0, 留意: 1, 參考: 2 };
+  assert.deepEqual(order.map((x) => rank[x]), [...order.map((x) => rank[x])].sort((a, b) => a - b));
+
+  // 來源單位的上標亂碼要清掉
+  assert.ok(!report.includes("m︿2"));
+  assert.match(report, /1\.73m²/);
+});
+
+test("完全沒有 HbA1c 紀錄時，指出缺檢而不是談它可不可信", () => {
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23", CKD: 1 },
+    rawSources: {
+      labData: { rObject: [{ fee_ym: "202512", assay_item_name: "Cr", assay_value: "1.8", unit_data: "mg/dL" }] },
+    },
+  });
+  const plan = resolvePlan(null, facts);
+  assert.ok(plan.labThresholds.some((h) => h.code === "hba1c-missing"));
+
+  const report = assembleClinicianReport(plan, facts, { reportDate: "2026-08-04", dataCutoff: null });
+  assert.match(report, /資料中沒有糖化血色素紀錄/);
+  // 沒有 HbA1c 卻說它「可能無法代表平均血糖」沒有意義
+  assert.ok(!report.includes("糖化血色素可能無法代表平均血糖"));
+
+  const patient = assemblePatientReport(plan, { reportDate: "2026-08-04", dataCutoff: null });
+  assert.match(patient, /沒有糖化血色素（HbA1c）的紀錄/);
 });
