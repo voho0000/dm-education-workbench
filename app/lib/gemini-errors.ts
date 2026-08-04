@@ -58,25 +58,25 @@ function adviceForStatus(status: number, raw: string): { title: string; advice: 
   if (status === 413) {
     return {
       title: "請求內容過大，被拒絕（HTTP 413）",
-      advice: "這通常發生在帶入指引全文（B）時。請確認是否真的需要整份指引；本工具不會自動截斷指引，需要縮減請由你決定。",
+      advice: "檢驗紀錄很多的病人，②③ 兩次呼叫的輸入會很大。本工具不會自動截斷病人資料，需要縮減請由你決定，或改用可接受更長輸入的模型。",
     };
   }
   if (status === 429) {
     return {
       title: "超過配額或速率上限（HTTP 429）",
-      advice: "免費層級對大型輸入特別容易觸發。請稍候再試、改用較小的輸入（例如改跑 A），或換一把有額度的金鑰。",
+      advice: "每產出一份報告會送出三次呼叫，免費層級的額度用得很快。下方原文會寫明是哪一項配額、上限多少、建議多久後重試。請等額度恢復、改用其他模型，或換一把有額度的金鑰。",
     };
   }
   if (status === 408 || status === 504 || status === 524 || status === 522) {
     return {
       title: `請求逾時（HTTP ${status}）`,
-      advice: "帶入指引全文時輸入約 283,353 tokens，單次回應可能需要數分鐘，中間的代理層可能先行斷線。可改跑 A 確認流程正常，或改用回應較快的模型。",
+      advice: "檢驗紀錄多的病人，單次回應可能需要數分鐘，中間的代理層可能先行斷線。可延長逾時上限，或改用回應較快的模型。",
     };
   }
   if (status === 499) {
     return {
       title: "連線在回應完成前被中斷（HTTP 499）",
-      advice: "多半是瀏覽器或中間代理層提前關閉連線。若是在 B 模式發生，請視為逾時處理。",
+      advice: "多半是瀏覽器或中間代理層提前關閉連線。若發生在輸入很大的病人身上，請比照逾時處理。",
     };
   }
   if (status >= 500) {
@@ -129,7 +129,7 @@ export function describeGeminiFailure(input: FailureInput): GeminiFailure {
     return {
       title: "等待 Gemini 回應超過設定的時間上限",
       advice:
-        "帶入指引全文時輸入約 283,353 tokens，回應時間會明顯拉長。可以延長逾時上限、改跑 A 對照，或改用較快的模型。請求已中止，沒有部分結果。",
+        "檢驗紀錄多的病人回應時間會明顯拉長。可以延長逾時上限，或改用較快的模型。請求已中止，沒有部分結果。",
       raw: cause instanceof Error ? cause.message : "",
       status: null,
       aborted: false,
