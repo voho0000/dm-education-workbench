@@ -45,6 +45,27 @@ const ANALYTE_LABELS: Record<Analyte, string> = {
   "glucose-unspecified": "血糖（未標示採檢時機）",
 };
 
+/**
+ * 醫師版的項目名稱。檢驗報告本來就是印英文縮寫，eGFR／HbA1c／Na／K
+ * 對醫師比「腎絲球過濾率」快。判讀器那一段也是英文在前，兩邊要一致——
+ * 先前一邊中文優先、一邊英文優先，同一節裡兩種順序並存。
+ * 病人版不用這一套，維持中文優先。
+ */
+const CLINICIAN_LABELS: Record<Analyte, string> = {
+  eGFR: "eGFR",
+  UACR: "UACR",
+  HbA1c: "HbA1c",
+  "fasting-glucose": "Glucose AC（飯前血糖）",
+  "LDL-C": "LDL-C",
+  "HDL-C": "HDL-C",
+  triglyceride: "TG（三酸甘油酯）",
+  creatinine: "Cr（肌酸酐）",
+  potassium: "K（血鉀）",
+  sodium: "Na（血鈉）",
+  haemoglobin: "Hb（血色素）",
+  "glucose-unspecified": "Glucose（未標示採檢時機）",
+};
+
 type Matcher = {
   analyte: Analyte;
   name: RegExp;
@@ -247,7 +268,7 @@ export function describeRange(finding: AnalyteFinding): string {
 export function describeRangeForClinician(finding: AnalyteFinding): string {
   const months = finding.feeMonths.length ? `費用年月 ${finding.feeMonths.join("、")}` : "來源未提供年月";
   const distinct = new Set(finding.values.map((v) => v.raw)).size;
-  return `${finding.label}：${valueText(finding)}${cleanUnit(finding.unit)}（共 ${finding.values.length} 筆／${distinct} 種結果，${months}）`;
+  return `${CLINICIAN_LABELS[finding.analyte]}：${valueText(finding)}${cleanUnit(finding.unit)}（共 ${finding.values.length} 筆／${distinct} 種結果，${months}）`;
 }
 
 /**

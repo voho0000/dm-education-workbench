@@ -1894,3 +1894,48 @@ test("同一個檢驗項目不會在醫師版出現兩次", () => {
   // 程式沒有的項目才由判讀器補，並附中文對照
   assert.match(section, /Mg（鎂）/);
 });
+
+test("醫師版檢驗項目一律英文縮寫在前，病人版一律中文在前", () => {
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23", R3: 2 },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", assay_item_name: "K", assay_value: "3.1", unit_data: "mmol/L" },
+          { fee_ym: "202512", assay_item_name: "eGFR", assay_value: "34.6", unit_data: "ml/min/1.73m2" },
+          { fee_ym: "202512", assay_item_name: "HbA1c", assay_value: "8.1", unit_data: "%" },
+        ],
+      },
+    },
+  });
+  const plan = resolvePlan(null, facts);
+  const check = parseLabReview(
+    JSON.stringify({
+      abnormal: [{ item: "Mg", worst: "1.29", unit: "mmol/L", reference: "0.78-1.11", direction: "high", why: "" }],
+    }),
+    facts,
+  );
+  const clinician = assembleClinicianReport(plan, facts, {
+    reportDate: "2026-08-04",
+    dataCutoff: null,
+    labReview: check,
+  });
+  const section = clinician.slice(clinician.indexOf("、檢驗結果"));
+  // 同一節裡不得一半中文優先、一半英文優先
+  const headings = ["依指引門檻表逐條判定的核心指標", "以下由輔助判讀器讀取"];
+  for (const line of section.split("\n").filter((l) => /：/.test(l) && /^\s{2}\S/.test(l))) {
+    if (headings.some((h) => line.includes(h)) || line.includes("⚠")) continue;
+    const head = line.trim().split("：")[0];
+    assert.ok(/^[A-Za-z(]/.test(head), `醫師版項目名稱應以英文起始：${head}`);
+  }
+  assert.match(section, /K（血鉀）/);
+  assert.match(section, /Mg（鎂）/);
+  assert.ok(!section.includes("腎絲球過濾率"), "醫師版用 eGFR，不用中文全名");
+
+  // 病人版相反：中文在前
+  const patient = assemblePatientReport(plan, { reportDate: "2026-08-04", dataCutoff: null });
+  assert.match(patient, /血鉀：/);
+  assert.match(patient, /腎絲球過濾率（eGFR）/);
+  assert.ok(!/^・K（/m.test(patient), "病人版不以英文縮寫起始");
+});
