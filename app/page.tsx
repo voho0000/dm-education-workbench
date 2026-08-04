@@ -272,12 +272,13 @@ export default function Home() {
   /** 不呼叫 LLM 也產得出來的判定，讓使用者按下按鈕前就知道會納入什麼。 */
   const preview = useMemo(() => (patientFacts ? resolvePlan(null, patientFacts) : null), [patientFacts]);
 
+  // 拆成兩段：事實是「確定性判定」那一站的輸入，判定結果才是它的產出。
+  // 併起來才是①收到的東西——先前兩者用同一個字串，畫面上那站的進出長得一模一樣。
+  const factsText = useMemo(() => (patientFacts ? factsForSelectorPrompt(patientFacts) : ""), [patientFacts]);
+  const decisionsText = useMemo(() => (preview ? decisionsForPrompt(preview) : ""), [preview]);
   const selectorInput = useMemo(
-    () =>
-      patientFacts
-        ? `${factsForSelectorPrompt(patientFacts)}\n\n${decisionsForPrompt(resolvePlan(null, patientFacts))}`
-        : "",
-    [patientFacts],
+    () => (factsText && decisionsText ? `${factsText}\n\n${decisionsText}` : ""),
+    [factsText, decisionsText],
   );
   const labInput = useMemo(() => labSectionOf(llmText), [llmText]);
   const narrativeInput = useMemo(
@@ -546,7 +547,7 @@ export default function Home() {
         role,
         state: callState[id],
         systemPrompt: prompt?.text,
-        inputs: [{ label: "送出的輸入", text: input }],
+        inputs: [{ label: id === "selector" ? "送出的輸入（確定性事實＋判定結果）" : "送出的輸入", text: input }],
         outputs: [{ label: "原始回應（未解析）", text: rawOutputs[tabId] ?? "" }],
         taken: callNotes[id]?.taken,
         problems: callNotes[id]?.problems,
@@ -561,7 +562,10 @@ export default function Home() {
         role: "抽出用藥、檢驗、R／PR／CKD 等結構化欄位，另外整理一份給模型讀的純文字。不改任何數值。",
         state: done(llmText),
         inputs: [{ label: "原始 JSON", text: rawInput }],
-        outputs: [{ label: "LLM 好讀文字", text: llmText }],
+        outputs: [
+          { label: "LLM 好讀文字（給②③讀原始紀錄）", text: llmText },
+          { label: "確定性事實（給下一站判定）", text: factsText },
+        ],
         taken: patientFacts
           ? [
               `檢驗 ${formatNumber(patientFacts.labRecordCount)} 筆、用藥 ${formatNumber(patientFacts.medicationRecordCount)} 筆`,
@@ -575,8 +579,8 @@ export default function Home() {
         title: "確定性判定",
         role: "依 R／PR 與指引門檻表決定主題、目標與追蹤間隔。這一站不呼叫模型，換模型不會改變結果。",
         state: preview ? "ok" : "idle",
-        inputs: [{ label: "確定性事實", text: selectorInput }],
-        outputs: [{ label: "判定結果（也是①的輸入之一）", text: selectorInput }],
+        inputs: [{ label: "確定性事實", text: factsText }],
+        outputs: [{ label: "主題判定結果（附每一項的理由）", text: decisionsText }],
         taken: preview
           ? [
               `納入 ${preview.decisions.filter((item) => item.kind !== "excluded").length}／${preview.decisions.length} 個併發症主題`,
@@ -626,6 +630,8 @@ export default function Home() {
     llmText,
     patientFacts,
     preview,
+    factsText,
+    decisionsText,
     selectorInput,
     labInput,
     narrativeInput,
