@@ -18,6 +18,13 @@ export type GeminiFailure = {
   aborted: boolean;
   /** 是逾時而非使用者中止 */
   timedOut: boolean;
+  /**
+   * 值得原樣重送。
+   *
+   * Gemini 會對同一份輸入間歇性回 400「Request contains an invalid argument」，
+   * 重送就會成功；金鑰錯或模型名稱錯同樣是 400，重送幾次都一樣。兩者要分開。
+   */
+  retryable: boolean;
 };
 
 const RAW_SNIPPET_CHARS = 300;
@@ -26,6 +33,20 @@ export function snippet(text: string, limit = RAW_SNIPPET_CHARS): string {
   const collapsed = text.replace(/\s+/g, " ").trim();
   if (collapsed.length <= limit) return collapsed;
   return `${collapsed.slice(0, limit)}…（原始回應共 ${collapsed.length} 字，此處僅顯示前 ${limit} 字）`;
+}
+
+/**
+ * 這個狀態＋原文值不值得原樣重送。
+ *
+ * 只認 Gemini 那個間歇性的 400「Request contains an invalid argument」——實測同一份
+ * 輸入連送八次會掛一到兩次，重送就會過。金鑰錯、模型錯同樣是 400，重送沒有意義。
+ */
+function retryableForStatus(status: number, raw: string): boolean {
+  const lower = raw.toLowerCase();
+  if (status === 429 || status >= 500) return true;
+  if (status === 400 && (lower.includes("api key not valid") || lower.includes("api_key_invalid"))) return false;
+  if (status === 400 && (lower.includes("invalid argument") || lower.includes("invalid_request"))) return true;
+  return false;
 }
 
 function adviceForStatus(status: number, raw: string): { title: string; advice: string } {
@@ -122,6 +143,7 @@ export function describeGeminiFailure(input: FailureInput): GeminiFailure {
       status: null,
       aborted: true,
       timedOut: false,
+      retryable: false,
     };
   }
 
@@ -134,6 +156,7 @@ export function describeGeminiFailure(input: FailureInput): GeminiFailure {
       status: null,
       aborted: false,
       timedOut: true,
+      retryable: false,
     };
   }
 
@@ -146,6 +169,7 @@ export function describeGeminiFailure(input: FailureInput): GeminiFailure {
       status: null,
       aborted: false,
       timedOut: false,
+      retryable: false,
     };
   }
 
@@ -157,6 +181,7 @@ export function describeGeminiFailure(input: FailureInput): GeminiFailure {
       status: null,
       aborted: false,
       timedOut: false,
+      retryable: false,
     };
   }
 
@@ -175,6 +200,7 @@ export function describeGeminiFailure(input: FailureInput): GeminiFailure {
       status,
       aborted: false,
       timedOut: false,
+      retryable: retryableForStatus(status, rawBody),
     };
   }
 
@@ -186,6 +212,7 @@ export function describeGeminiFailure(input: FailureInput): GeminiFailure {
     status,
     aborted: false,
     timedOut: false,
+    retryable: retryableForStatus(status, apiMessage),
   };
 }
 

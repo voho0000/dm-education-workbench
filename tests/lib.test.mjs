@@ -2565,3 +2565,23 @@ test("納入與不納入的分界只剩 PR=0 與兩者皆缺", () => {
   assert.ok(!plan.topicModuleIds.includes("LEG-CIRCULATION-CORE"), "PR6=0 不得納入");
   assert.ok(!plan.topicModuleIds.includes("KIDNEY-CORE"), "R3／PR3 皆缺不得納入");
 });
+
+test("間歇性的 400 會重試，金鑰錯的 400 不會", () => {
+  // Gemini 對同一份輸入會間歇性回這個 400，重送就會過。
+  const transient = describeGeminiFailure({
+    status: 400,
+    apiMessage: "Request contains an invalid argument.",
+  });
+  assert.equal(transient.retryable, true);
+  assert.match(transient.raw, /invalid argument/i);
+
+  // 金鑰錯同樣是 400，但重送幾次都一樣，重試只是拖時間
+  const badKey = describeGeminiFailure({ status: 400, apiMessage: "API key not valid. Please pass a valid API key." });
+  assert.equal(badKey.retryable, false);
+
+  assert.equal(describeGeminiFailure({ status: 429, apiMessage: "quota" }).retryable, true);
+  assert.equal(describeGeminiFailure({ status: 503, apiMessage: "overloaded" }).retryable, true);
+  assert.equal(describeGeminiFailure({ status: 404, apiMessage: "model not found" }).retryable, false);
+  // 使用者主動中止不是失敗，更不該重試
+  assert.equal(describeGeminiFailure({ cause: Object.assign(new Error("x"), { name: "AbortError" }) }).retryable, false);
+});

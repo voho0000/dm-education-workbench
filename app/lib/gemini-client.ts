@@ -125,7 +125,36 @@ export type CallResult = {
   elapsedMs: number;
 };
 
+const MAX_ATTEMPTS = 4;
+
 export async function callGemini(args: CallArgs): Promise<CallResult> {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= MAX_ATTEMPTS; attempt += 1) {
+    try {
+      return await callGeminiOnce(args);
+    } catch (error) {
+      lastError = error;
+      const retryable =
+        error instanceof GeminiRequestError && error.failure.retryable && attempt < MAX_ATTEMPTS;
+      if (!retryable) throw error;
+      // 指數退避。中途被使用者中止或整體逾時就別再等了。
+      await new Promise((resolve, reject) => {
+        const timer = setTimeout(resolve, 1500 * 2 ** (attempt - 1));
+        args.signal.addEventListener(
+          "abort",
+          () => {
+            clearTimeout(timer);
+            reject(error);
+          },
+          { once: true },
+        );
+      });
+    }
+  }
+  throw lastError;
+}
+
+async function callGeminiOnce(args: CallArgs): Promise<CallResult> {
   const { apiKey, model, systemPrompt, input, signal, direct, simulate } = args;
   const timeoutMs = args.timeoutMs ?? DEFAULT_TIMEOUT_MS;
   const timeout = withTimeout(signal, timeoutMs);
