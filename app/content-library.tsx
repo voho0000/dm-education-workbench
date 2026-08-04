@@ -129,14 +129,24 @@ function SelfCareTab() {
           <BodyText text={item.patientText} />
           {item.definiteVariants?.length ? (
             <div className="libraryVariants">
-              <strong>已確認狀況時替換的句子</strong>
+              <strong>整句替換（兩句擇一，不會同時出現）</strong>
+              <p className="libraryVariantHint">
+                正文寫成「若…」是因為要能給所有人看。程式已從資料確認這位病人符合下列條件時，那一句改用直述句。
+              </p>
               {item.definiteVariants.map((variant, index) => (
-                <p key={index}>
-                  <span className="libraryTag">{VARIANT_WHEN_LABEL[variant.when] ?? variant.when}</span>
-                  <span className="libraryVariantFrom">{variant.from}</span>
-                  <span className="libraryVariantArrow">→</span>
-                  <span>{variant.to}</span>
-                </p>
+                <div key={index} className="libraryVariant">
+                  <p className="libraryVariantWhen">
+                    <span className="libraryTag">{VARIANT_WHEN_LABEL[variant.when] ?? variant.when}</span>
+                  </p>
+                  <p className="libraryVariantLine">
+                    <span className="libraryVariantSide">未確認時</span>
+                    <span className="libraryVariantFrom">{variant.from}</span>
+                  </p>
+                  <p className="libraryVariantLine">
+                    <span className="libraryVariantSide libraryVariantSideOn">已確認時</span>
+                    <span className="libraryVariantTo">{variant.to}</span>
+                  </p>
+                </div>
               ))}
             </div>
           ) : null}

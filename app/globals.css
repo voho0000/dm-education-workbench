@@ -498,13 +498,31 @@ textarea { font-family: inherit; resize: vertical; }
   border: 1px dashed var(--line); border-radius: 10px;
 }
 .libraryVariants strong { display: block; color: var(--muted); font-size: 11px; letter-spacing: 0.04em; }
-.libraryVariants p {
-  margin: 8px 0 0;
-  display: flex; gap: 8px; align-items: baseline; flex-wrap: wrap;
-  color: #2c424a; font-size: 12px; line-height: 1.8;
+.libraryVariantHint { margin: 6px 0 0; color: var(--muted); font-size: 11px; line-height: 1.7; }
+.libraryVariant { margin: 12px 0 0; }
+.libraryVariantWhen { margin: 0; }
+/*
+ * 兩句是擇一關係，所以要並排比對。先前用 flex + wrap，替換後的新句被擠到
+ * 下一行、跟箭頭斷開，看起來像另一段獨立文字——沒人看得出那是替換結果。
+ * 改成標籤欄固定寬度的兩欄，「未確認時／已確認時」直接寫出來。
+ */
+.libraryVariantLine {
+  margin: 6px 0 0;
+  display: grid; grid-template-columns: 62px 1fr; gap: 10px; align-items: baseline;
+  font-size: 12px; line-height: 1.8;
 }
+.libraryVariantSide {
+  padding: 2px 0;
+  color: var(--muted); font-size: 11px; font-weight: 700;
+  white-space: nowrap;
+}
+.libraryVariantSideOn { color: var(--teal-dark); }
 .libraryVariantFrom { color: var(--muted); text-decoration: line-through; }
-.libraryVariantArrow { color: var(--teal); font-weight: 750; }
+.libraryVariantTo { color: #2c424a; }
+
+@media (max-width: 760px) {
+  .libraryVariantLine { grid-template-columns: 1fr; gap: 2px; }
+}
 
 .librarySubhead {
   margin: 26px 0 12px;
