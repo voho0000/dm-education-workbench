@@ -2181,3 +2181,33 @@ test("完全沒有 HbA1c 紀錄時，指出缺檢而不是談它可不可信", (
   const patient = assemblePatientReport(plan, { reportDate: "2026-08-04", dataCutoff: null });
   assert.match(patient, /沒有糖化血色素（HbA1c）的紀錄/);
 });
+
+test("同名但檢體不同的項目要標出尿液，血液那筆不得誤標", () => {
+  // RBC 同時存在於血液與尿液。判讀器只拿到項目名稱，分不出來；
+  // 程式從醫令代碼分得出來，但只比名稱會把血液那筆也標成尿液。
+  const facts = extractPatientFacts({
+    userInfo: { gender: "M" },
+    userInput: { REPORT_DATE: "2026-07-23" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "08011C", assay_item_name: "RBC", assay_value: "2.95", unit_data: "x10^6/ul" },
+          { fee_ym: "202512", order_code: "06012C", assay_item_name: "RBC", assay_value: "＞1000", unit_data: "/uL" },
+          { fee_ym: "202512", order_code: "06012C", assay_item_name: "Protein", assay_value: "2+", unit_data: "NIL" },
+        ],
+      },
+    },
+  });
+  const check = parseLabReview(
+    JSON.stringify({
+      abnormal: [
+        { item: "RBC", worst: "2.95", unit: "x10^6/ul", reference: "4.5-5.7", direction: "low", why: "" },
+        { item: "RBC", worst: "＞1000", unit: "/uL", reference: "＜17", direction: "high", why: "" },
+        { item: "Protein", worst: "2+", unit: "", reference: "Negative", direction: "high", why: "" },
+      ],
+    }),
+    facts,
+  );
+  const names = check.review.abnormal.map((a) => a.item);
+  assert.deepEqual(names, ["RBC", "RBC（尿液）", "Protein（尿液）"]);
+});

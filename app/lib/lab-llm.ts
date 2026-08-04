@@ -16,7 +16,7 @@
  */
 
 import { analyteForItemName } from "./lab-findings.ts";
-import type { PatientFacts } from "./patient-facts.ts";
+import type { LabItemFact, PatientFacts } from "./patient-facts.ts";
 
 export const LAB_REVIEW_PROMPT = `你是協助整理檢驗報告的助手，讀者是忙碌的醫師。
 
@@ -89,6 +89,12 @@ export type LabReview = {
   worth_a_look: string[];
   data_quality_notes: string[];
 };
+
+/**
+ * 判讀器只拿到項目名稱，分不出檢體。程式知道——醫令 06012C／06013C 是尿液。
+ * 「RBC ＞1000 /uL」是血尿，和血液 RBC 並列在同一張表裡會被誤讀。
+ */
+const URINE_ORDER_CODES = /^(06012C|06013C)$/;
 
 export type LabReviewCheck = {
   review: LabReview;
@@ -191,6 +197,32 @@ export function parseLabReview(raw: string, facts: PatientFacts): LabReviewCheck
     return false;
   });
   const unknownItems = [...new Set(abnormal.map((item) => item.item).filter((name) => !sourceItems.has(name)))];
+
+  /**
+   * 依來源的醫令代碼標出尿液檢體。判讀器只拿到項目名稱，分不出來；程式分得出來。
+   *
+   * 要連單位一起比對：同一位病人的 RBC 同時存在於血液（x10^6/ul）與尿液（/uL），
+   * 只比名稱會把血液那筆也標成尿液。名稱在來源中全部都是尿液時才可以只看名稱。
+   */
+  const isUrine = (item: LabItemFact) => item.orderCodes.some((code) => URINE_ORDER_CODES.test(code));
+  const byName = new Map<string, LabItemFact[]>();
+  for (const item of facts.labItems) {
+    byName.set(item.itemName, [...(byName.get(item.itemName) ?? []), item]);
+  }
+  for (const item of abnormal) {
+    if (/尿|urine|dipstick/i.test(item.item)) continue;
+    const sameName = byName.get(item.item) ?? [];
+    if (!sameName.length) continue;
+    // 同名可能同時存在於血液與尿液（RBC 就是）。用引用的數值找出是哪一筆——
+    // 判讀器的輸出不一定帶單位，但數值一定帶，而抄寫檢查本來就在比對數值。
+    const matched = sameName.filter((source) =>
+      [item.worst, item.worstOther].some(
+        (value) => value && source.rawValues.some((raw) => raw.trim() === value.trim() || numeric(raw) === numeric(value)),
+      ),
+    );
+    const decisive = matched.length ? matched : sameName;
+    if (decisive.every(isUrine)) item.item = `${item.item}（尿液）`;
+  }
 
   return {
     review: {
