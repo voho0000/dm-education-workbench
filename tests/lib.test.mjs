@@ -2032,3 +2032,30 @@ test("醫師版有依指引的追蹤間隔，且用事實陳述與出處", () =>
   assert.ok(!patient.includes("單股纖維壓覺"));
   assert.match(patient, /建議每年做一次足部感覺檢查/);
 });
+
+test("eGFR 低於 30 時要說明已超出該註解的適用範圍", () => {
+  // 指引註 3 的條件是「eGFR 介於 30–60」。低於 30 時「至少每半年」仍是下限，
+  // 但那條註解沒有涵蓋它，不能拿它當出處說已經夠了。
+  const withEgfr = (value) =>
+    resolvePlan(
+      null,
+      extractPatientFacts({
+        userInfo: { gender: "M" },
+        userInput: { REPORT_DATE: "2026-07-23" },
+        rawSources: {
+          labData: {
+            rObject: [{ fee_ym: "202512", assay_item_name: "eGFR", assay_value: value, unit_data: "ml/min/1.73m2" }],
+          },
+        },
+      }),
+    ).labThresholds.find((h) => h.code === "kidney-intensive-followup");
+
+  const stage3 = withEgfr("45");
+  assert.ok(stage3, "eGFR 45 應觸發加密追蹤");
+  assert.ok(!stage3.clinicianMessage.includes("腎臟科"), "在適用範圍內不需要額外說明");
+
+  const stage4 = withEgfr("24.1");
+  assert.ok(stage4, "eGFR 24.1 仍應出現加密追蹤，否則排程表沒有腎臟那一列");
+  assert.match(stage4.clinicianMessage, /超出本註適用範圍（30–60）/);
+  assert.match(stage4.clinicianMessage, /腎臟科/);
+});

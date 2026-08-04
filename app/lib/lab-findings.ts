@@ -318,8 +318,12 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
   const egfr = get("eGFR");
   const uacr = get("UACR");
 
-  // 腎臟：加密追蹤門檻
+  // 腎臟：加密追蹤門檻。
+  // 指引註 3 的適用範圍是「eGFR 介於 30–60」，不是「低於 60」。低於 30 時
+  // 「至少每半年」仍然成立（那是下限），但那條註解沒有涵蓋它，追蹤頻率
+  // 應由腎臟科決定——不能拿註 3 當出處說已經夠了。
   const egfrBelow60 = egfr && egfr.min < 60;
+  const egfrBelow30 = egfr && egfr.min < 30;
   const uacrAbove300 = uacr && uacr.values.some((v) => v.value > 300 || (v.value === 300 && v.qualifier === ">="));
   if (egfrBelow60 || uacrAbove300) {
     const parts: string[] = [];
@@ -331,7 +335,9 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       analyte: "eGFR",
       ruleId: "kidney-intensive-followup",
       severity: "attention",
-      clinicianMessage: `${parts.join("；")}。依指引${r?.statement ?? ""}`,
+      clinicianMessage: `${parts.join("；")}。依指引${r?.statement ?? ""}${
+        egfrBelow30 ? "eGFR 低於 30 已超出本註適用範圍（30–60），追蹤頻率宜依腎臟科評估。" : ""
+      }`,
       patientMessage:
         "您的資料中曾出現腎功能或尿蛋白的異常結果。指引建議這種情況至少每半年追蹤一次，請與醫療團隊確認您目前需要的追蹤頻率。（資料只有費用年月，無法確認這些結果的先後順序或是否為最新。）",
       citation: r?.citation ?? null,

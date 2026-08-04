@@ -229,7 +229,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   {
     id: "kidney-intensive-followup",
     category: "screening-interval",
-    appliesTo: "UACR 超過 300 mg/g 或 eGFR 介於 30–60 mL/min/1.73m²",
+    appliesTo: "UACR 超過 300 mg/g 或 eGFR 介於 30–60 mL/min/1.73m²（低於 30 不在本註範圍）",
     statement: "至少每半年監測追蹤一次。",
     citation: { table: "表九 註 3", pdfPage: 19 },
     patientFacing: true,
