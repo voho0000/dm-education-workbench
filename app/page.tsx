@@ -5,6 +5,14 @@ import { BUILD_ID } from "./build-id";
 import { ContentLibrary } from "./content-library";
 import { DecisionTrace } from "./decision-trace";
 import { Pipeline, type Station, type StationState } from "./pipeline";
+// 食譜讀的是真檔案。抄一份說明到別處一定會過時，而且沒有機制會發現。
+import formatPatientSource from "./lib/format-patient.ts?raw";
+import patientFactsSource from "./lib/patient-facts.ts?raw";
+import modulePlanSource from "./lib/module-plan.ts?raw";
+import labLlmSource from "./lib/lab-llm.ts?raw";
+import labNarrativeSource from "./lib/lab-narrative.ts?raw";
+import validateReportSource from "./lib/validate-report.ts?raw";
+import { extractSymbols } from "./lib/source-extract";
 import { hasHardBlocker, runBlockers, type Blocker } from "./lib/blockers";
 import { buildRunInput, type ComposedInput } from "./lib/build-input";
 import { MODULE_CATALOG_VERSION } from "./lib/education-modules";
@@ -62,6 +70,33 @@ const PROMPTS: Array<{ id: PromptId; label: string; text: string; role: string }
     text: LAB_NARRATIVE_PROMPT,
   },
 ];
+
+/** 每一站的食譜：從真檔案裡切出這一站實際跑的函式。 */
+const RECIPE = {
+  ingest: [
+    { label: "format-patient.ts — formatPatientJson()", text: extractSymbols(formatPatientSource, ["formatPatientJson"], "format-patient.ts") },
+    { label: "patient-facts.ts — extractPatientFacts()", text: extractSymbols(patientFactsSource, ["extractPatientFacts"], "patient-facts.ts") },
+  ],
+  decide: [
+    { label: "module-plan.ts — decideTopics()", text: extractSymbols(modulePlanSource, ["decideTopics"], "module-plan.ts") },
+    { label: "module-plan.ts — resolvePlan()", text: extractSymbols(modulePlanSource, ["resolvePlan"], "module-plan.ts") },
+  ],
+  selector: [
+    { label: "module-plan.ts — parseModuleSelection()", text: extractSymbols(modulePlanSource, ["parseModuleSelection"], "module-plan.ts") },
+  ],
+  labReview: [
+    { label: "lab-llm.ts — parseLabReview()", text: extractSymbols(labLlmSource, ["parseLabReview"], "lab-llm.ts") },
+  ],
+  narrative: [
+    { label: "lab-narrative.ts — parseLabNarrative()", text: extractSymbols(labNarrativeSource, ["parseLabNarrative"], "lab-narrative.ts") },
+  ],
+  assemble: [
+    { label: "lab-narrative.ts — formatLabNarrative()（把核實結果就地標示）", text: extractSymbols(labNarrativeSource, ["formatLabNarrative"], "lab-narrative.ts") },
+    { label: "module-plan.ts — assemblePatientReport()", text: extractSymbols(modulePlanSource, ["assemblePatientReport"], "module-plan.ts") },
+    { label: "module-plan.ts — assembleClinicianReport()", text: extractSymbols(modulePlanSource, ["assembleClinicianReport"], "module-plan.ts") },
+    { label: "validate-report.ts — validateReport()", text: extractSymbols(validateReportSource, ["validateReport"], "validate-report.ts") },
+  ],
+} as const;
 
 const OUTPUT_TABS: Array<{ id: OutputTab; label: string; filename: string; note: string }> = [
   { id: "patient", label: "病人版衛教報告", filename: "病人版衛教報告.txt", note: "由固定模組組裝，只有「您的檢驗數值」一段是模型寫的。" },
@@ -537,19 +572,30 @@ export default function Home() {
    * 它們都是「東西進去、東西出來」的一站；差別在旁邊的標記，不在版型。
    */
   const stations = useMemo<Station[]>(() => {
-    const done = (value: string): StationState => (value ? "ok" : rawInput.trim() ? "idle" : "idle");
+    const code = (ports: ReadonlyArray<{ label: string; text: string }>) =>
+      ports.map((port) => ({ ...port, code: true }));
+
     const llm = (id: PromptId, title: string, role: string, input: string, tabId: OutputTab): Station => {
       const prompt = PROMPTS.find((item) => item.id === id);
+      const raw = rawOutputs[tabId] ?? "";
       return {
         id,
         kind: "llm",
         title,
         role,
         state: callState[id],
-        systemPrompt: prompt?.text,
-        inputs: [{ label: id === "selector" ? "送出的輸入（確定性事實＋判定結果）" : "送出的輸入", text: input }],
-        outputs: [{ label: "原始回應（未解析）", text: rawOutputs[tabId] ?? "" }],
-        taken: callNotes[id]?.taken,
+        inputs: [
+          {
+            label: id === "selector" ? "送出的輸入（確定性事實＋判定結果）" : "送出的輸入（檢驗紀錄）",
+            text: input,
+          },
+        ],
+        recipe: [
+          { label: `system prompt（唯讀，隨版本送審）`, text: prompt?.text ?? "" },
+          ...code(RECIPE[id]),
+        ],
+        steps: callNotes[id]?.taken,
+        outputs: [{ label: "原始回應（未解析）", text: raw }],
         problems: callNotes[id]?.problems,
       };
     };
@@ -559,19 +605,23 @@ export default function Home() {
         id: "ingest",
         kind: "program",
         title: "讀取申報 JSON",
-        role: "抽出用藥、檢驗、R／PR／CKD 等結構化欄位，另外整理一份給模型讀的純文字。不改任何數值。",
-        state: done(llmText),
+        role: "把申報 JSON 拆成兩份東西：一份給模型讀的純文字，一份給程式判定用的結構化事實。不改任何數值。",
+        state: llmText ? "ok" : "idle",
         inputs: [{ label: "原始 JSON", text: rawInput }],
+        recipe: code(RECIPE.ingest),
+        steps: patientFacts
+          ? [
+              `讀到檢驗 ${formatNumber(patientFacts.labRecordCount)} 筆、用藥 ${formatNumber(patientFacts.medicationRecordCount)} 筆`,
+              patientFacts.labHasDrawDates
+                ? "檢驗有採檢日"
+                : "檢驗只有費用年月、沒有採檢日，因此後面所有敘述都不得聲稱時序",
+              "R／PR 欄位缺 key 就記成「未提供」，不補 0",
+            ]
+          : [],
         outputs: [
           { label: "LLM 好讀文字（給②③讀原始紀錄）", text: llmText },
           { label: "確定性事實（給下一站判定）", text: factsText },
         ],
-        taken: patientFacts
-          ? [
-              `檢驗 ${formatNumber(patientFacts.labRecordCount)} 筆、用藥 ${formatNumber(patientFacts.medicationRecordCount)} 筆`,
-              patientFacts.labHasDrawDates ? "檢驗有採檢日" : "檢驗只有費用年月，沒有採檢日，因此不做任何時序敘述",
-            ]
-          : [],
       },
       {
         id: "decide",
@@ -580,14 +630,16 @@ export default function Home() {
         role: "依 R／PR 與指引門檻表決定主題、目標與追蹤間隔。這一站不呼叫模型，換模型不會改變結果。",
         state: preview ? "ok" : "idle",
         inputs: [{ label: "確定性事實", text: factsText }],
-        outputs: [{ label: "主題判定結果（附每一項的理由）", text: decisionsText }],
-        taken: preview
+        recipe: code(RECIPE.decide),
+        steps: preview
           ? [
-              `納入 ${preview.decisions.filter((item) => item.kind !== "excluded").length}／${preview.decisions.length} 個併發症主題`,
-              `自我照護模組 ${preview.selfCareModuleIds.length} 個、指引目標 ${preview.targets.targets.filter((item) => item.value).length} 項`,
-              `檢驗門檻判定 ${preview.labThresholds.length} 則`,
+              `逐一判定 6 個併發症主題：納入 ${preview.decisions.filter((item) => item.kind !== "excluded").length} 個`,
+              `依併發症與年齡解出指引目標 ${preview.targets.targets.filter((item) => item.value).length} 項`,
+              `把檢驗值比對門檻表：命中 ${preview.labThresholds.length} 則`,
+              `依用藥與低血糖紀錄選出自我照護模組 ${preview.selfCareModuleIds.length} 個`,
             ]
           : [],
+        outputs: [{ label: "主題判定結果（附每一項的理由）", text: decisionsText }],
       },
       llm(
         "selector",
@@ -614,15 +666,28 @@ export default function Home() {
         id: "assemble",
         kind: "program",
         title: "驗證與組裝",
-        role: "把模型的產出逐一比對來源數值、掃描禁止事項，通過的才組進報告；沒通過的就地標示，不改寫也不刪除。",
+        role: "拿前面五站的產出，把模型寫的部分逐一比對來源數值、掃描禁止事項，通過的才組進報告；沒通過的就地標示，不改寫也不刪除。",
         state: patientReport ? "ok" : "idle",
-        inputs: [],
+        inputs: [
+          { label: "主題判定結果（第 2 站）", text: decisionsText },
+          { label: "① 原始回應（第 3 站）", text: rawOutputs.rawSelector ?? "" },
+          { label: "② 原始回應（第 4 站）", text: rawOutputs.rawLabReview ?? "" },
+          { label: "③ 原始回應（第 5 站）", text: rawOutputs.rawNarrative ?? "" },
+        ],
+        recipe: code(RECIPE.assemble),
+        steps: patientReport
+          ? [
+              "解析三份原始回應；任何一份解析不了就整份丟棄，該段退回程式輸出",
+              "把③敘述裡的每個數字比對回原始檢驗紀錄，對不上的標記為未核實",
+              "掃描禁止事項（時序宣稱、風險標籤、叫病人自行停藥等）",
+              "依固定模組逐字組裝兩份報告；未通過的部分就地加註警語，文字本身不改寫",
+              ...checks.map((line) => `⚠ ${line}`),
+            ]
+          : [],
         outputs: [
           { label: "病人版衛教報告", text: patientReport },
           { label: "醫師版報告", text: clinicianReport },
         ],
-        taken: patientReport ? ["正文逐字來自固定模組，模型不改寫"] : [],
-        problems: checks,
       },
     ];
   }, [

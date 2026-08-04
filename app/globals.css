@@ -318,11 +318,19 @@ textarea { font-family: inherit; resize: vertical; }
 }
 
 /* ── 管線 ─────────────────────────────────────────────── */
-.pipeBoard { margin: 0; padding: 0; list-style: none; }
+/*
+ * min-width: 0 一路傳下去。grid／flex 子項預設是 min-width: auto，
+ * 裡面那個 white-space: pre 的程式碼區塊會把整條鏈撐開，overflow-x: auto
+ * 就永遠不會生效——實測窄螢幕下站別被撐成 921px 塞在 333px 的容器裡。
+ */
+.pipeBoard { margin: 0; padding: 0; list-style: none; min-width: 0; }
+.pipeGroup, .pipePort { min-width: 0; }
+.stepBody > * { min-width: 0; }
 
 /* 站與站之間畫一段連線，讀起來才像一條產線而不是六張獨立卡片 */
 .pipeStation {
   position: relative;
+  min-width: 0;
   margin: 0 0 26px;
   padding: 16px 18px;
   border: 1px solid var(--line); border-radius: 12px;
@@ -369,7 +377,17 @@ textarea { font-family: inherit; resize: vertical; }
 .pipeState-skipped { background: var(--paper); color: var(--muted); }
 .pipeRole { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.75; }
 
-.pipePort { margin: 8px 0 0; }
+/* 材料／食譜／成品三段要分得開，不然點開幾個就分不清哪個是哪個 */
+.pipeGroup { margin: 14px 0 0; }
+.pipeGroupLabel {
+  margin: 0 0 6px;
+  display: flex; align-items: baseline; gap: 8px;
+  color: var(--ink); font-size: 11px; font-weight: 800; letter-spacing: 0.08em;
+}
+.pipeGroupLabel span { color: var(--muted); font-size: 11px; font-weight: 500; letter-spacing: 0; }
+.pipeSteps { margin: 0; padding: 0 0 0 20px; color: #2c424a; font-size: 12px; line-height: 1.95; }
+
+.pipePort { margin: 6px 0 0; }
 .pipePortHead {
   width: 100%;
   padding: 8px 12px;
@@ -397,9 +415,10 @@ textarea { font-family: inherit; resize: vertical; }
   white-space: pre-wrap; word-break: break-word;
 }
 
-.pipeTaken, .pipeProblems { margin: 10px 0 0; padding: 0 0 0 18px; font-size: 12px; line-height: 1.8; }
-.pipeTaken { color: #2c424a; }
-.pipeProblems { color: #8d322c; }
+.pipeProblems { margin: 12px 0 0; padding: 0 0 0 18px; color: #8d322c; font-size: 12px; line-height: 1.8; }
+
+/* 程式碼保留縮排、不換行，靠自己橫向捲 */
+.pipePortCode { white-space: pre; word-break: normal; overflow-x: auto; max-height: 420px; }
 
 @media (max-width: 760px) {
   .pipeStation { padding: 14px; }

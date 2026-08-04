@@ -48,6 +48,7 @@ import { parseLabReview, labSectionOf, LAB_REVIEW_PROMPT } from "../app/lib/lab-
 import { extractLabFindings, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
 import { parseLabNarrative, formatLabNarrative, LAB_NARRATIVE_PROMPT } from "../app/lib/lab-narrative.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
+import { extractSymbol, extractSymbols } from "../app/lib/source-extract.ts";
 
 
 const T2 = { medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01" }] } };
@@ -2584,4 +2585,20 @@ test("間歇性的 400 會重試，金鑰錯的 400 不會", () => {
   assert.equal(describeGeminiFailure({ status: 404, apiMessage: "model not found" }).retryable, false);
   // 使用者主動中止不是失敗，更不該重試
   assert.equal(describeGeminiFailure({ cause: Object.assign(new Error("x"), { name: "AbortError" }) }).retryable, false);
+});
+
+test("原始碼切片切得出完整函式，切不到時明說", async () => {
+  const source = await readFile(new URL("../app/lib/lab-narrative.ts", import.meta.url), "utf8");
+
+  const parsed = extractSymbol(source, "parseLabNarrative");
+  assert.ok(parsed, "應該切得到 parseLabNarrative");
+  assert.match(parsed, /export function parseLabNarrative/);
+  // 大括號要收平，否則畫面上會看到半截函式
+  assert.equal((parsed.match(/\{/g) ?? []).length, (parsed.match(/\}/g) ?? []).length);
+  // 宣告上方的說明要一起帶出來——「為什麼這樣寫」通常寫在那裡
+  assert.ok(parsed.trimStart().startsWith("/") || /^\s*(export )?function/.test(parsed));
+
+  assert.equal(extractSymbol(source, "根本不存在的函式"), null);
+  // 切不到要留下痕跡，不能靜默略過
+  assert.match(extractSymbols(source, ["根本不存在的函式"], "lab-narrative.ts"), /找不到/);
 });

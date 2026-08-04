@@ -54,6 +54,15 @@ test("首頁畫出實際的資料流：程式判定為主，三次 LLM 呼叫", 
   assert.match(html, /確定性判定/);
   assert.match(html, /驗證與組裝/);
   assert.match(html, /原始回應（未解析）/);
+
+  // 每一站都要有材料、食譜、成品三段；食譜是真的程式碼，不是另抄一份說明
+  assert.match(html, /材料/);
+  assert.match(html, /食譜/);
+  assert.match(html, /成品/);
+  assert.match(html, /assemblePatientReport\(\)/);
+  assert.match(html, /parseLabNarrative\(\)/);
+  // 切不到的符號會留下這個字樣，代表函式改名而食譜沒跟上
+  assert.doesNotMatch(html, /可能已改名/);
 });
 
 test("三份固定內容攤在頁面上，逐條看得到，且標明未核准", async () => {
