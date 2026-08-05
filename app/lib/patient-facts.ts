@@ -349,9 +349,27 @@ export function extractPatientFacts(input: unknown): PatientFacts {
   if (!reportDate) dataQualityFlags.push("來源未提供 REPORT_DATE，無法標示資料截止日。");
   const existingComplications = riskFields(userInput, "R");
   const riskPredictions = riskFields(userInput, "PR");
-  const missingRisk = [...existingComplications, ...riskPredictions].filter((item) => !item.present).map((item) => item.code);
-  if (missingRisk.length) {
-    dataQualityFlags.push(`來源未出現下列欄位，不得補值也不得視為 0：${missingRisk.join("、")}。`);
+  /*
+   * R／PR 缺欄位不是資料缺漏，是資料模型本身。
+   *
+   * 先前這裡對每位病人都推一條「來源未出現下列欄位，不得補值也不得視為 0」，
+   * 兩半都是錯的：
+   *   - R 缺欄位就是該項 DCSI 分數為 0（六位病人 sum(R) 全部等於 DCSI），
+   *     而且程式自己就是這樣處理的——同一份輸入裡卻叫模型不要當成 0，自相矛盾。
+   *   - PR 缺欄位代表該主題已有 R 值、不需要預測，不是來源漏給。
+   * 真正的異常只有一種：同一主題 R 與 PR 同時出現，或兩者同時缺席。
+   */
+  const conflicting: string[] = [];
+  for (let topic = 1; topic <= 6; topic += 1) {
+    const r = existingComplications.find((item) => item.code === `R${topic}`);
+    const pr = riskPredictions.find((item) => item.code === `PR${topic}`);
+    if (r?.present && pr?.present) conflicting.push(`R${topic} 與 PR${topic} 同時有值`);
+    if (!r?.present && !pr?.present) conflicting.push(`R${topic} 與 PR${topic} 同時缺席`);
+  }
+  if (conflicting.length) {
+    dataQualityFlags.push(
+      `下列主題不符合來源的資料模型（同一主題應只有 R 或 PR 其中一個）：${conflicting.join("、")}。`,
+    );
   }
 
   const diabetesType = detectDiabetesType(medications);
@@ -462,6 +480,14 @@ export function factsForSelectorPrompt(facts: PatientFacts, options: { maxMedica
 
   lines.push("", "【檢驗資料可用性】");
   lines.push(`共 ${facts.labRecordCount} 筆；是否有採檢日：${facts.labHasDrawDates ? "有" : "沒有，只有費用年月"}`);
+
+  lines.push("", "【R／PR 的資料模型】");
+  lines.push(
+    "- 同一主題只會出現 R 或 PR 其中一個。",
+    "- R 有值＝該併發症已發生；R 未出現＝尚未發生（該項 DCSI 分數為 0）。",
+    "- PR 未出現＝該主題已有 R 值、不需要預測，不得視為 PR=0。",
+    "- 來源只提供 PR1–PR6，沒有 PR7。",
+  );
 
   if (facts.dataQualityFlags.length) {
     lines.push("", "【資料限制】");

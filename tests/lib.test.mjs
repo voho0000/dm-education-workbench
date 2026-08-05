@@ -201,12 +201,30 @@ test("extractPatientFacts 在診斷碼衝突時拒絕判定糖尿病類型", () 
   assert.ok(facts.dataQualityFlags.some((flag) => flag.includes("同時出現")));
 });
 
-test("extractPatientFacts 不把缺少的欄位視為 0", () => {
+test("R／PR 缺欄位記成未提供，且只有真的異常才報資料問題", () => {
+  // 欄位本身仍要如實記成 present=false／value=null——判定邏輯靠這個分辨
+  // 「未提供」與「值為 0」。
   const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-03", R1: 2 }, rawSources: {} });
   const r2 = facts.existingComplications.find((item) => item.code === "R2");
   assert.equal(r2.present, false);
   assert.equal(r2.value, null);
-  assert.ok(facts.dataQualityFlags.some((flag) => flag.includes("不得視為 0")));
+
+  // 但缺欄位不是資料缺漏：R 缺＝該項 DCSI 為 0，PR 缺＝已有 R 值不需預測。
+  // 先前每位病人都被推一條「不得視為 0」，那句話和程式自己的行為互相矛盾。
+  assert.ok(!facts.dataQualityFlags.some((flag) => flag.includes("不得視為 0")));
+
+  // 真正的異常是同一主題兩者同時缺席（R1 有值所以主題 1 正常，2–6 都異常）
+  const flag = facts.dataQualityFlags.find((item) => item.includes("資料模型"));
+  assert.ok(flag, "同一主題 R 與 PR 同時缺席時要報出來");
+  assert.match(flag, /R2 與 PR2 同時缺席/);
+  assert.doesNotMatch(flag, /R1 與 PR1/);
+
+  // 正常的病人不該有這條旗標
+  const normal = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", R1: 2, R2: 1, R3: 1, R4: 2, R5: 2, R6: 1 },
+    rawSources: {},
+  });
+  assert.ok(!normal.dataQualityFlags.some((item) => item.includes("資料模型")));
 });
 
 test("extractPatientFacts 在只有費用年月時標記無法建立趨勢", () => {
@@ -2704,4 +2722,74 @@ test("替換句的原句必須真的存在於模組正文中", () => {
       );
     }
   }
+});
+
+test("檢驗證據本身就能把腎臟主題救回來", () => {
+  // DCSI 的腎臟分項純靠診斷碼算，而診斷碼只出現在有開藥的就診。實測有病人
+  // eGFR 最低 22.8（CKD 第 4 期）卻 R3 缺值、CKD=0、也沒有腎臟診斷碼。
+  const lowEgfr = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", CKD: 0, PR3: PR_LOW },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "09015C", assay_item_name: "eGFR", assay_value: "22.8", unit_data: "mL/min/1.73m2" },
+        ],
+      },
+    },
+  });
+  const kidney = resolvePlan(null, lowEgfr).decisions.find((item) => item.topic === 3);
+  assert.equal(kidney.kind, "established");
+  assert.match(kidney.reason, /eGFR 曾低於 60/);
+
+  // 巨量白蛋白尿同樣要觸發
+  const macroAlbuminuria = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", CKD: 0, PR3: PR_LOW },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "12021C", assay_item_name: "UACR", assay_value: "1501", unit_data: "mg/g" },
+        ],
+      },
+    },
+  });
+  assert.match(
+    resolvePlan(null, macroAlbuminuria).decisions.find((item) => item.topic === 3).reason,
+    /UACR 曾達到或超過 300/,
+  );
+
+  // 腎功能正常就不得無中生有
+  const normal = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", CKD: 0, PR3: PR_LOW },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "09015C", assay_item_name: "eGFR", assay_value: "95", unit_data: "mL/min/1.73m2" },
+        ],
+      },
+    },
+  });
+  assert.equal(resolvePlan(null, normal).decisions.find((item) => item.topic === 3).kind, "excluded");
+});
+
+test("eGFR 單位裡的 1.73 不算未核實數字", () => {
+  // mL/min/1.73m² 是單位，不是病人的數值。誤報會讓每一份有 eGFR 的報告都掛警語，
+  // 警語多了就沒人看，真正的問題被稀釋掉。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "09015C", assay_item_name: "eGFR", assay_value: "45", unit_data: "mL/min/1.73m2" },
+        ],
+      },
+    },
+  });
+  const check = parseLabNarrative(
+    JSON.stringify({
+      narrative: "腎絲球過濾率（eGFR）紀錄中曾出現 45 mL/min/1.73m²。",
+      cited_values: [{ item: "eGFR", value: "45" }],
+    }),
+    facts,
+  );
+  assert.deepEqual(check.uncitedNumbers, []);
 });

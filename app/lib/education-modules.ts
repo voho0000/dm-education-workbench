@@ -64,7 +64,7 @@ export const EDUCATION_MODULES: EducationModule[] = [
     id: "EYE-CORE",
     topic: "R1",
     title: "眼睛與視力",
-    appliesWhen: "R1 大於 0，或視網膜病變屬高風險預測項目。",
+    appliesWhen: "R1 大於 0，或 PR1 為 1（適度介入）或 2（積極照護）。",
     typeGate: "any",
     autoOnly: false,
     patientText: `糖尿病可能影響眼底的小血管。早期視網膜病變常沒有不舒服，視力正常也不代表眼底正常，所以定期眼底檢查很重要。
@@ -97,7 +97,7 @@ export const EDUCATION_MODULES: EducationModule[] = [
     id: "STROKE-CORE",
     topic: "R2",
     title: "腦血管",
-    appliesWhen: "R2 大於 0，或腦血管疾病屬高風險預測項目。",
+    appliesWhen: "R2 大於 0，或 PR2 為 1（適度介入）或 2（積極照護）。",
     typeGate: "any",
     autoOnly: false,
     patientText: `血糖、血壓、血脂、吸菸與心律問題都可能影響腦血管。重點是持續管理可改善的因素，並讓自己和家人認得中風警訊。
@@ -112,7 +112,7 @@ export const EDUCATION_MODULES: EducationModule[] = [
     id: "KIDNEY-CORE",
     topic: "R3",
     title: "腎臟",
-    appliesWhen: "R3 大於 0、CKD 欄位為 1，或腎病變屬高風險預測項目。",
+    appliesWhen: "R3 大於 0、CKD 欄位為 1、申報診斷碼有慢性腎臟病、檢驗證據達門檻，或 PR3 為 1（適度介入）或 2（積極照護）。",
     typeGate: "any",
     autoOnly: false,
     patientText: `糖尿病腎臟病變早期通常沒有症狀，不能只靠水腫或不舒服來判斷；要看尿液白蛋白／肌酸酐比值（UACR）、血清肌酸酐與腎絲球過濾率（eGFR）。
@@ -145,7 +145,7 @@ export const EDUCATION_MODULES: EducationModule[] = [
     id: "NERVE-CORE",
     topic: "R4",
     title: "神經與感覺",
-    appliesWhen: "R4 大於 0，或神經病變屬高風險預測項目。",
+    appliesWhen: "R4 大於 0，或 PR4 為 1（適度介入）或 2（積極照護）。",
     typeGate: "any",
     autoOnly: false,
     patientText: `糖尿病神經病變可能出現麻木、刺痛、灼熱、疼痛、感覺變鈍或平衡變差，早期也可能沒有症狀。感覺變差時小傷口不容易被發現，所以麻木不等於沒問題。類似症狀也可能來自其他疾病或營養問題，需由醫療人員評估。
@@ -178,7 +178,7 @@ export const EDUCATION_MODULES: EducationModule[] = [
     id: "HEART-CORE",
     topic: "R5",
     title: "心臟",
-    appliesWhen: "R5 大於 0，或心血管疾病屬高風險預測項目。",
+    appliesWhen: "R5 大於 0，或 PR5 為 1（適度介入）或 2（積極照護）。",
     typeGate: "any",
     autoOnly: false,
     patientText: `糖尿病常和高血壓、血脂異常、吸菸、腎功能問題與心血管疾病互相影響。保護心臟不是只看血糖。
@@ -193,7 +193,7 @@ export const EDUCATION_MODULES: EducationModule[] = [
     id: "LEG-CIRCULATION-CORE",
     topic: "R6",
     title: "下肢循環",
-    appliesWhen: "R6 大於 0，或周邊血管病變屬高風險預測項目。",
+    appliesWhen: "R6 大於 0，或 PR6 為 1（適度介入）或 2（積極照護）。",
     typeGate: "any",
     autoOnly: false,
     patientText: `周邊動脈疾病是腿部與足部的動脈循環變差。可能沒有症狀，也可能走一段路後小腿痠痛、休息後改善，或足部冰冷、顏色變淡、傷口不易癒合。這和神經麻木不同，但兩者可能同時存在。

@@ -99,7 +99,13 @@ type Matcher = {
  */
 const MATCHERS: Matcher[] = [
   { analyte: "eGFR", name: /^eGFR(\s*\((MDRD|CKD-EPI)\))?$/i },
-  { analyte: "UACR", name: /Albumin\s*\/\s*Creatinine/i },
+  {
+    // 各院寫法差很多：Albumin/Creatinine、UACR、ACR、微量白蛋白／肌酸酐比值。
+    // 只認第一種的話，寫成其他形式的紀錄會被當成完全沒做這項檢查——
+    // 而這一項正是早期腎病變唯一能抓到的指標。
+    analyte: "UACR",
+    name: /Albumin\s*\/\s*Creatinine|\bU?ACR\b|微量白蛋白|白蛋白.{0,6}肌酸酐.{0,4}比/i,
+  },
   { analyte: "HbA1c", name: /^(HbA1c|Hb\s*A1c)/i, unit: /%/ },
   {
     // 只有名稱明確標示空腹／AC／飯前，才套用空腹血糖目標。
@@ -608,4 +614,35 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
   // 這一層只保留 compareToTargets 涵蓋不到的：腎臟追蹤與用藥安全。
 
   return hits;
+}
+
+/**
+ * 檢驗數據本身是否已經指向腎臟病變。
+ *
+ * 為什麼需要這個：DCSI 的腎臟分項純靠診斷碼算，而診斷碼只出現在有開藥的就診——
+ * 實測五位病人中，有人 eGFR 最低 22.8（CKD 第 4 期）卻 R3 缺值、CKD 欄位為 0、
+ * 也沒有任何腎臟診斷碼，腎臟衛教因此整段不會出現。
+ *
+ * 門檻沿用 evaluateThresholds 已在用的兩個數字，都溯得到指引表九 註 3：
+ *   eGFR < 60，或 UACR ≥ 300 mg/g。
+ *
+ * ⚠ 抽取出來的門檻表**沒有微量白蛋白尿（30–300 mg/g）的數字**，所以這一段接不到
+ * 早期白蛋白尿。要涵蓋那一段需要醫療團隊補一條有出處的規則，不能由程式自行訂 30。
+ */
+export function kidneyLabEvidence(facts: PatientFacts): { triggered: boolean; reason: string } {
+  const findings = extractLabFindings(facts);
+  const egfr = findings.find((item) => item.analyte === "eGFR");
+  const uacr = findings.find((item) => item.analyte === "UACR");
+
+  if (egfr && egfr.min < 60) {
+    return { triggered: true, reason: `檢驗數據顯示 eGFR 曾低於 60（最低 ${egfr.min}）` };
+  }
+  const macro = uacr?.values.filter((v) => v.value > 300 || (v.value === 300 && v.qualifier === ">="));
+  if (macro?.length) {
+    return {
+      triggered: true,
+      reason: `檢驗數據顯示 UACR 曾達到或超過 300 mg/g（${[...new Set(macro.map((v) => v.raw))].join("、")}）`,
+    };
+  }
+  return { triggered: false, reason: "" };
 }

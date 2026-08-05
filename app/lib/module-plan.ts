@@ -29,6 +29,7 @@ import {
   describeRangeForClinician,
   evaluateThresholds,
   extractLabFindings,
+  kidneyLabEvidence,
   lowestMeasuredGlucose,
   type Analyte,
 } from "./lab-findings.ts";
@@ -57,6 +58,15 @@ import { formatLabNarrative, type LabNarrativeCheck } from "./lab-narrative.ts";
  *
  * 教訓：靠六位病人的資料歸納一個決定臨床方向的常數，即使內部一致也可能是錯的。
  * 這種常數要的是規格，不是統計。
+ *
+ * ── R 值的意義（2026-08-05 由資料負責人確認）──────────────────
+ *
+ * R1–R7 就是 DCSI 的分項分數，**DCSI 怎麼算就怎麼用**，我們不另做判斷。
+ * 六位病人 sum(R) 全部等於 DCSI，無一例外，與這個說法一致。
+ *
+ * 因此 R4=2 不是錯誤：原始 DCSI 的神經病變雖然只計 0/1，但這份資料的實作
+ * 計到 2，我們照收。規格文件寫「R4 區分 0/1」講的是狀態數（有／無），
+ * 不是字面值——實測 R4 只出現 0 與 2，從沒出現 1，與二元一致。
  */
 /** 風險最低，維持既有照護即可，不納入主題內容 */
 export const PR_LOW = 0;
@@ -134,6 +144,9 @@ export function decideTopics(facts: PatientFacts): TopicDecision[] {
   const ckdFlag = facts.comorbidityFlags.ckd;
   const hasCkdFlag = ckdFlag.known && ckdFlag.value;
   const ckdIcdCodes = facts.ckdIcdCodes;
+  // 檢驗證據是第三條獨立來源。R3、CKD 欄位、診斷碼都可能同時漏掉同一位病人，
+  // 而 eGFR 22.8 這種數字自己就說明了問題。
+  const kidneyLabs = kidneyLabEvidence(facts);
 
   for (let topic = 1; topic <= 6; topic += 1) {
     const r = facts.existingComplications.find((item) => item.code === `R${topic}`);
@@ -156,10 +169,12 @@ export function decideTopics(facts: PatientFacts): TopicDecision[] {
 
     // 來源 CKD 欄位與申報診斷碼都是獨立於 DCSI 的既有診斷宣告，優先於 R3 的缺值。
     // DCSI 只認診斷碼，而診斷碼只出現在有開藥的就診，所以 R3 漏掉腎病變的機會不小。
-    if (topic === 3 && (hasCkdFlag || ckdIcdCodes.length > 0)) {
+    if (topic === 3 && (hasCkdFlag || ckdIcdCodes.length > 0 || kidneyLabs.triggered)) {
       const basis = hasCkdFlag
         ? "來源 CKD 欄位為 1"
-        : `申報診斷碼出現慢性腎臟病（${ckdIcdCodes.join("、")}）`;
+        : ckdIcdCodes.length > 0
+          ? `申報診斷碼出現慢性腎臟病（${ckdIcdCodes.join("、")}）`
+          : kidneyLabs.reason;
       decisions.push({
         ...base,
         kind: "established",
