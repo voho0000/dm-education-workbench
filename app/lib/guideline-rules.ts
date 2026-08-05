@@ -14,7 +14,7 @@
  * 但可直接跳頁核對。
  */
 
-export const RULES_VERSION = "2022-guideline-extract-0.2";
+export const RULES_VERSION = "2022-guideline-extract-0.3";
 export const RULES_APPROVED = false;
 export const RULES_SOURCE = "中華民國糖尿病學會《2022第2型糖尿病臨床照護指引》";
 
@@ -65,6 +65,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
     category: "glycemic-target",
     appliesTo: "一般成人",
     statement: "糖化血色素控制目標為低於 7.0%，並需個別化考量。",
+    patientStatement: "糖化血色素建議控制在 7.0% 以下。實際目標會依您的年齡、病程與其他疾病調整，請以醫療團隊為您訂的數字為準。",
     citation: { table: "表一 血糖控制目標", pdfPage: 13 },
     patientFacing: true,
   },
@@ -149,6 +150,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
     category: "bp-target",
     appliesTo: "一般糖尿病人",
     statement: "血壓控制在 140/90 mmHg 以下。",
+    patientStatement: "血壓建議控制在 140/90 mmHg 以下。",
     citation: { section: "第十四章 心血管併發症", pdfPage: 147 },
     patientFacing: true,
   },
@@ -158,6 +160,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
     category: "bp-target",
     appliesTo: "可耐受且屬心血管或腦血管高危族群",
     statement: "在病人可承受的情況下可進一步控制至 130/80 mmHg。",
+    patientStatement: "血壓建議控制在 130/80 mmHg 以下。若您有頭暈或站起來時眼前發黑，請回診時告訴醫療團隊，目標可以調整。",
     citation: { section: "第十四章 心血管併發症", pdfPage: 147 },
     patientFacing: true,
   },
@@ -196,6 +199,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
     category: "lipid-target",
     appliesTo: "所有糖尿病人",
     statement: "三酸甘油酯目標為低於 150 mg/dL；達到或超過 500 mg/dL 時需藥物處理。",
+    patientStatement: "三酸甘油酯建議控制在 150 mg/dL 以下。",
     citation: { table: "表一 血脂的目標建議", pdfPage: 154 },
     patientFacing: true,
   },

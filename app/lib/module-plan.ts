@@ -723,7 +723,7 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
       const decision = byId.get(id) ?? byId.get(topicIds.find((other) => id.startsWith(other.split("-")[0])) ?? "");
       return decision?.kind === "prevention-active" || decision?.kind === "prevention-moderate";
     });
-    section(lines, "與您有關的健康重點");
+    section(lines, "併發症風險：與您有關的健康重點");
     lines.push(
       "以下項目是依您的健康紀錄挑選出來，建議您特別注意。如果您不確定自己是否有相關診斷，請在回診時向醫療團隊確認。",
       ...(fromPrediction
@@ -743,7 +743,7 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
   if (options.labNarrative) {
     // LLM 直接寫的連貫段落。固定句型只涵蓋程式有規則的項目，而且會把
     // 「曾出現偏低」與「曾出現偏高」並排成兩句，要讀者自己合起來想。
-    section(lines, "您的檢驗數值");
+    section(lines, "觀察摘要：您的檢驗數值");
     lines.push(...formatLabNarrative(options.labNarrative), "");
   } else {
   // 沒有配對到任何數值的提醒（例如「資料中沒有 HbA1c 紀錄」、低血糖跨了兩種
@@ -762,7 +762,7 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
     ];
 
     if (plan.labNoteEntries.length || looseMessages.length) {
-      section(lines, "您的其他檢驗數值");
+      section(lines, "觀察摘要：您的其他檢驗數值");
       plan.labNoteEntries.forEach((entry) => {
         lines.push(`・${entry.text}`);
         for (const message of entry.messages) lines.push(`   ${message}`);
@@ -772,16 +772,39 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
     }
   }
 
-  if (plan.followUp.text) {
-    section(lines, "追蹤時程");
-    lines.push(plan.followUp.text, "");
+  /**
+   * 中期目標。
+   *
+   * 這一段本來只在醫師版有，病人版看不到自己要往哪裡走——只知道現在的數值，
+   * 不知道該落在哪裡、什麼時候再驗。目標值與出處都取自門檻表，不是模型生成的。
+   *
+   * 追蹤間隔併進來：目標與「什麼時候再驗一次」分成兩段的話，病人得自己配對。
+   */
+  const patientTargets = plan.targets.targets.filter((item) => item.value && !item.needsClinicianConfirmation);
+  if (patientTargets.length || plan.followUp.text) {
+    section(lines, "中期目標：下一階段要達到的數字");
+    if (patientTargets.length) {
+      // 出處只在這裡講一次。逐條掛〔章表，p.頁次〕會把頁碼變成病人版追溯不到的
+      // 裸數字，而且對病人沒有意義——要回查的是醫師，醫師版本來就逐條附了。
+      lines.push("以下是依中華民國糖尿病學會指引、對照您的狀況推出的控制目標。實際數字仍以醫療團隊的評估為準。", "");
+      for (const target of patientTargets) {
+        const rule = target.ruleId ? RULES_BY_ID.get(target.ruleId) : undefined;
+        lines.push(`◆ ${target.metric}：${rule?.patientStatement ?? target.value}`, "");
+      }
+      // 「現在離目標多遠」不放這裡：那句話已經貼在【您的檢驗數值】對應的數值下面，
+      // 兩處都印就會出現一字不差的重複句。
+    }
+    if (plan.followUp.text) {
+      lines.push("下次檢查的建議時間：", "");
+      lines.push(plan.followUp.text, "");
+    }
   }
 
   // 「照護重點」與「每天可以做的事」是我們的內部分類（跨主題共用區塊 vs
   // DSMES 自我照護模組），不是病人的分類——兩區都是「要做的事」，分成兩塊
   // 只會讓人以為有什麼差別。合成一區。
   if (plan.sharedBlockIds.length || plan.selfCareModuleIds.length) {
-    section(lines, "日常照護");
+    section(lines, "預防叮嚀：日常照護");
     for (const id of plan.sharedBlockIds) {
       const block = SHARED_CARE_BLOCKS.find((item) => item.id === id);
       if (!block) continue;

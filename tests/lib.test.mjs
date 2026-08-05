@@ -1809,7 +1809,7 @@ test("病人版的分區與排版讓一般民眾讀得下去", () => {
   // 器官名是中性的，標題本身要說出這是已經有的還是要預防的
   // 已發生與預防不分區：R 來自我們看不到推導方式的來源倉儲，
   // 分區等於要病人自己想「我到底有沒有」，而那個問題我們答不了。
-  assert.match(report, /【與您有關的健康重點】/);
+  assert.match(report, /【併發症風險：與您有關的健康重點】/);
   assert.ok(!report.includes("您已經有的狀況"));
   assert.ok(!report.includes("您的紀錄中已有的項目"));
   assert.ok(!report.includes("── 預防重點 ──"));
@@ -1831,7 +1831,7 @@ test("病人版的分區與排版讓一般民眾讀得下去", () => {
   assert.match(report, /^・血鈉：/m);
 
   // 兩個「要做的事」區塊合成一個
-  assert.match(report, /【日常照護】/);
+  assert.match(report, /【預防叮嚀：日常照護】/);
   assert.ok(!report.includes("【照護重點】"));
   assert.ok(!report.includes("【每天可以做的事】"));
   // 就醫時機分兩組，不用逐條讀完才知道哪幾條該打 119
@@ -1840,7 +1840,7 @@ test("病人版的分區與排版讓一般民眾讀得下去", () => {
 
   // 緊急就醫時機是唯一延誤會造成傷害的內容，必須在前面
   assert.ok(
-    report.indexOf("什麼情況要立刻就醫") < report.indexOf("【日常照護】"),
+    report.indexOf("什麼情況要立刻就醫") < report.indexOf("【預防叮嚀：日常照護】"),
     "就醫時機不能放在最後",
   );
 
@@ -2304,7 +2304,7 @@ test("有檢驗敘述時，草稿橫幅要標示它未經逐句核准", () => {
     labNarrative: narrative,
   });
   assert.match(withNarrative, /由模型直接撰寫，未經醫療團隊逐句核准/);
-  assert.match(withNarrative, /【您的檢驗數值】/);
+  assert.match(withNarrative, /【觀察摘要：您的檢驗數值】/);
 
   // 沒有敘述時退回程式組出的固定句型
   const without = assemblePatientReport(plan, { reportDate: "2026-08-04", dataCutoff: null });
@@ -2650,4 +2650,41 @@ test("肌酸酐以醫令代碼判定，六種名稱寫法都算，同醫令下�
   assert.equal(analyteForItemName("Creatinine(B)", "mg/dL"), "creatinine");
   assert.equal(analyteForItemName("CRE screening"), null, "抗藥菌篩檢不是肌酸酐");
   assert.notEqual(analyteForItemName("eGFR(MDRD)"), "creatinine");
+});
+
+test("病人版涵蓋健保署要求的五大核心面向", () => {
+  // 115 年度智能衛教生成模組案要求五個面向都要有。章節標題直接對齊規格用語，
+  // 評審逐條對照時不必猜哪一段算哪一項。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", R1: 2, R3: 1, PR5: PR_MODERATE, SEX: 1, DCSI: 3 },
+    rawSources: T2,
+  });
+  const report = assemblePatientReport(resolvePlan(null, facts), {
+    reportDate: "2026-08-03",
+    dataCutoff: "2026-08-03",
+  });
+
+  assert.match(report, /【觀察摘要：/, "(1) 觀察摘要");
+  assert.match(report, /【中期目標：/, "(3) 中期目標");
+  assert.match(report, /【併發症風險：/, "(4) 併發症風險");
+  assert.match(report, /【預防叮嚀：/, "(5) 預防叮嚀");
+
+  // 中期目標要真的有數字，不能只有標題
+  const goals = report.slice(report.indexOf("【中期目標："));
+  assert.match(goals, /◆ .+：.+\d/, "中期目標必須列出實際的目標值");
+  assert.match(goals, /中華民國糖尿病學會指引/, "要標明目標的來源");
+  // 頁碼不進病人版：那會變成追溯不到的裸數字，而且要回查的是醫師
+  assert.doesNotMatch(goals.split("【")[1] ?? "", /p\.\d+/);
+});
+
+test("目標的病人版用語不得改動數字", () => {
+  // patientStatement 只換措辭。數字改掉就是改臨床內容，而那要走送審。
+  for (const rule of GUIDELINE_RULES) {
+    if (!rule.patientStatement) continue;
+    const numbersIn = (text) => (text.match(/\d+(?:\.\d+)?/g) ?? []).join(",");
+    const inStatement = new Set((rule.statement.match(/\d+(?:\.\d+)?/g) ?? []));
+    for (const n of (rule.patientStatement.match(/\d+(?:\.\d+)?/g) ?? [])) {
+      assert.ok(inStatement.has(n), `${rule.id} 的病人版出現 statement 沒有的數字 ${n}（${numbersIn(rule.patientStatement)}）`);
+    }
+  }
 });
