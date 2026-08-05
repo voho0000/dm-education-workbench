@@ -2854,3 +2854,31 @@ test("modules profile 的必要段落檢查用的是新的六段", () => {
   const reordered = validateReport({ report: wrongOrder, patientText: "", profile: "modules" });
   assert.equal(reordered.results.find((item) => item.id === "required-headings").passed, false);
 });
+
+test("模型已把單位寫進數值時不再接第二次", () => {
+  // 實測五位病人共出現 8 次「104 mg/dL mg/dL」這種重複。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: {
+      labData: { rObject: [{ fee_ym: "202512", assay_item_name: "BUN", assay_value: "104", unit_data: "mg/dL" }] },
+    },
+  });
+  const withUnitInside = parseLabReview(
+    JSON.stringify({ abnormal: [{ item: "BUN", worst: "104 mg/dL", unit: "mg/dL", why: "偏高" }] }),
+    facts,
+  );
+  const section = labSectionOf("");
+  void section;
+  const rendered = JSON.stringify(withUnitInside.review.abnormal[0]);
+  assert.match(rendered, /104 mg\/dL/);
+
+  const facts2 = facts;
+  const plan = resolvePlan(null, facts2);
+  const report = assembleClinicianReport(plan, facts2, {
+    reportDate: "2026-08-03",
+    dataCutoff: null,
+    labReview: withUnitInside,
+  });
+  assert.doesNotMatch(report, /mg\/dL\s+mg\/dL/, "單位不得重複");
+  assert.match(report, /104 mg\/dL/);
+});

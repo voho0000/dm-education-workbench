@@ -260,7 +260,15 @@ export function formatLabReview(check: LabReviewCheck, alreadyShown: Set<string>
 
   if (shown.length) {
     for (const item of shown) {
-      const unit = item.unit ? ` ${item.unit}` : "";
+      /*
+       * 模型有時把單位寫進 worst（「104 mg/dL」），程式再接一次就變成
+       * 「104 mg/dL mg/dL」。實測五位病人共出現 8 次。
+       * 已經帶單位的就不要再接。
+       */
+      const alreadyHasUnit =
+        Boolean(item.unit) &&
+        item.worst.replace(/\s+/g, "").toLowerCase().endsWith(item.unit.replace(/\s+/g, "").toLowerCase());
+      const unit = item.unit && !alreadyHasUnit ? ` ${item.unit}` : "";
       const other = item.worstOther ? `／另一端 ${item.worstOther}` : "";
       const flag = check.unverifiedValues.includes(item) ? "  ⚠ 此數值在來源中找不到" : "";
       lines.push(`  ${item.item}：${item.worst}${unit}${other}（參考 ${item.reference || "來源未提供"}）${item.why ? `｜${item.why}` : ""}${flag}`);

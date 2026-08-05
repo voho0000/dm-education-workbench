@@ -208,12 +208,3 @@ export const EDUCATION_MODULES: EducationModule[] = [
 ];
 
 export const MODULE_BY_ID = new Map(EDUCATION_MODULES.map((item) => [item.id, item]));
-
-export const SELECTABLE_MODULES = EDUCATION_MODULES.filter((item) => !item.autoOnly);
-
-/** 給 LLM 的目錄摘要：只有 id、標題與適用規則，沒有病人正文。 */
-export function moduleCatalogForPrompt(): string {
-  return SELECTABLE_MODULES.map(
-    (item) => `${item.id}｜${item.title}\n  適用：${item.appliesWhen}`,
-  ).join("\n");
-}
