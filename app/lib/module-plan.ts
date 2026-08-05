@@ -916,7 +916,13 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
     if (r?.present) {
       state = `已發生（嚴重度 ${r.rawValue}）`;
     } else if (kindByTopic.get(key) === "established") {
-      state = "已發生（依來源 CKD 註記；本項未輸出嚴重度）";
+      /*
+       * 用該主題實際的判定理由，不要固定寫「依來源 CKD 註記」。
+       * 腎臟主題有三條覆寫來源（CKD 欄位／申報診斷碼／檢驗證據），寫死一條
+       * 等於對另外兩條說謊——醫師照著去查 CKD 欄位會發現它是 0。
+       */
+      const decision = plan.decisions.find((entry) => String(entry.topic) === key);
+      state = `已發生（${decision?.reason ?? "本項未輸出嚴重度"}）`;
     } else if (pr?.present && pr.value !== null) {
       state = `未發生｜風險預測：${PR_ACTION_TIER[pr.value] ?? "未定義分級"}`;
     } else {

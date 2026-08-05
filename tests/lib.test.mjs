@@ -45,7 +45,7 @@ import {
   MODULE_CATALOG_VERSION,
 } from "../app/lib/education-modules.ts";
 import { parseLabReview, labSectionOf, LAB_REVIEW_PROMPT } from "../app/lib/lab-llm.ts";
-import { analyteForItemName, extractLabFindings, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
+import { analyteForItemName, evaluateThresholds, extractLabFindings, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
 import { parseLabNarrative, formatLabNarrative, LAB_NARRATIVE_PROMPT } from "../app/lib/lab-narrative.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
 import { extractSymbol, extractSymbols } from "../app/lib/source-extract.ts";
@@ -536,16 +536,21 @@ test("組裝出來的病人版報告能通過 modules profile 的全部檢查", 
     userInput: { REPORT_DATE: "2026-08-03", DCSI: 6, R2: 2, R4: 2, R5: 2, PR1: PR_HIGH, PR3: PR_MODERATE, PR6: PR_LOW },
     rawSources: T2,
   });
-  const report = assemblePatientReport(resolvePlan(null, facts), {
-    reportDate: "2026-08-03",
-    dataCutoff: "2026-08-03",
-  });
-  const result = validateReport({
-    report,
-    patientText: formatPatientJson({ userInput: { REPORT_DATE: "2026-08-03" }, rawSources: {} }),
-    profile: "modules",
-  });
+  const plan = resolvePlan(null, facts);
+  const narrative = { narrative: "您的檢驗數值整體如下。", shortTerm: "先從每天量血壓開始。", midTerm: "三個月後回診複查。",
+    foundAfterAll: [], unverifiedValues: [], uncitedNumbers: [], bannedPhrases: [] };
+  const patientText = formatPatientJson({ userInput: { REPORT_DATE: "2026-08-03" }, rawSources: {} });
+  const report = assemblePatientReport(plan, { reportDate: "2026-08-03", dataCutoff: "2026-08-03", labNarrative: narrative });
+  const result = validateReport({ report, patientText, profile: "modules" });
   assert.equal(result.passedCount, result.applicableCount, JSON.stringify(result.results.filter((r) => !r.passed), null, 1));
+
+  // ③ 失敗時短期建議整段消失，而它沒有程式版的替代文字。
+  // 驗證必須說出這件事，不能照樣宣稱六段齊全（外部審查重現過 hasShortTerm=false 但 passed=true）。
+  const degraded = assemblePatientReport(plan, { reportDate: "2026-08-03", dataCutoff: "2026-08-03" });
+  assert.ok(!degraded.includes("【短期建議："));
+  const degradedResult = validateReport({ report: degraded, patientText, profile: "modules" });
+  const headings = degradedResult.results.find((r) => /段落|heading/i.test(r.id + r.label));
+  assert.equal(headings?.passed, false, "缺少短期建議時，必要段落檢查必須失敗");
 });
 
 test("decisionsForPrompt 不得把已納入的模組標成未納入", () => {
@@ -570,7 +575,7 @@ test("醫師版不列每份都一樣的通則性廢話", () => {
   const facts = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03", DCSI: 6, R2: 2, R5: 2 },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: { rObject: [{ fee_ym: "202512", assay_item_name: "飯前血糖", assay_value: "203" }] },
     },
   });
@@ -676,7 +681,7 @@ test("追蹤時程不得同時出現互相矛盾的腎臟間隔", () => {
   const withAbnormal = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03", R3: 2 },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: {
         rObject: [
           { fee_ym: "202512", assay_item_name: "eGFR", assay_value: "34.6", unit_data: "ml/min/1.73m2" },
@@ -698,7 +703,7 @@ test("實際檢驗值會接進門檻判定並保留不等號", () => {
   const facts = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03", R3: 2 },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: {
         rObject: [
           { fee_ym: "202512", assay_item_name: "Albumin/Creatinine(Dipstick)", assay_value: "≧300 (2+)", unit_data: "mg/g" },
@@ -755,7 +760,7 @@ test("arm C 的報告數字都可追溯", () => {
   const facts = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03", DCSI: 6, R2: 2, R4: 2, R5: 2, CKD: 1 },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: { rObject: [{ fee_ym: "202512", assay_item_name: "eGFR", assay_value: "34.6", unit_data: "ml/min/1.73m2" }] },
     },
   });
@@ -777,7 +782,7 @@ test("同一條指引規則不得在安全提示中出現兩次", () => {
   const facts = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03", DCSI: 6, BIRTHDAY: "1950-01-01", R2: 2, R5: 2, CKD: 1 },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: {
         rObject: [
           { fee_ym: "202512", assay_item_name: "eGFR", assay_value: "34.6", unit_data: "ml/min/1.73m2" },
@@ -807,7 +812,7 @@ function factsWithLabs(labs, userInput = {}) {
   return extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03", ...userInput },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: { rObject: labs.map((l) => ({ fee_ym: "202512", ...l })) },
     },
   });
@@ -898,7 +903,7 @@ test("醫師版的安全提示不夾帶資料來源的通則說明", () => {
   const facts = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03", BIRTHDAY: "1950-01-01", CKD: 1, R5: 2 },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: {
         rObject: [
           { fee_ym: "202512", assay_item_name: "eGFR", assay_value: "34.6", unit_data: "ml/min/1.73m2" },
@@ -1002,7 +1007,7 @@ test("同一個檢驗項目只產生一則病人警語", () => {
   const facts = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03", BIRTHDAY: "1954-01-01" },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: {
         rObject: [
           { fee_ym: "202512", assay_item_name: "Glucose AC(手指)", assay_value: "248", unit_data: "mg/dl" },
@@ -1065,7 +1070,7 @@ test("eGFR 低於 30 時 metformin 判為禁用而非減量", () => {
     extractPatientFacts({
       userInput: { REPORT_DATE: "2026-08-03" },
       rawSources: {
-        medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+        medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
         labData: { rObject: [{ fee_ym: "202512", assay_item_name: "eGFR", assay_value: "24.1", unit_data: "ml/min/1.73m2" }] },
       },
     }),
@@ -1218,7 +1223,7 @@ test("數值呈現不得藏起最極端的一筆", () => {
   const facts = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03" },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: {
         rObject: ["42.7", "35.2", "37.0", "＞60.0", "24.1", "64.7"].map((v) => ({
           fee_ym: "202512",
@@ -1609,7 +1614,7 @@ test("醫師版每一條門檻判定都能追到出處，沒有出處的要標�
   const facts = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03", BIRTHDAY: "1950-01-01", CKD: 1, R5: 2 },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: {
         rObject: [
           { fee_ym: "202512", assay_item_name: "eGFR", assay_value: "34.6", unit_data: "ml/min/1.73m2" },
@@ -1651,7 +1656,7 @@ test("所有引用的 ruleId 都要能在規則表中解出", () => {
   const facts = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03", BIRTHDAY: "1950-01-01", CKD: 1, R2: 2, R5: 2 },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: {
         rObject: [
           { fee_ym: "202512", assay_item_name: "eGFR", assay_value: "24.1", unit_data: "ml/min/1.73m2" },
@@ -1824,7 +1829,7 @@ test("病人版的分區與排版讓一般民眾讀得下去", () => {
     userInfo: { gender: "M", birthday: "1949-03-08" },
     userInput: { REPORT_DATE: "2026-07-23", DCSI: 6, R2: 2, R4: 2, R5: 2, CKD: 1, PR1: PR_HIGH },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: {
         rObject: [
           { fee_ym: "202512", assay_item_name: "eGFR", assay_value: "34.6", unit_data: "ml/min/1.73m2" },
@@ -1971,7 +1976,7 @@ test("醫師版的敘述句也用英文縮寫，不與清單相反", () => {
     userInfo: { gender: "M" },
     userInput: { REPORT_DATE: "2026-07-23", CKD: 1 },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: {
         rObject: [
           { fee_ym: "202512", assay_item_name: "K", assay_value: "3.1", unit_data: "mmol/L" },
@@ -2029,7 +2034,7 @@ test("醫師版有依指引的追蹤間隔，且用事實陳述與出處", () =>
     userInfo: { gender: "M" },
     userInput: { REPORT_DATE: "2026-07-23", R1: 2, R4: 2, CKD: 1 },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: {
         rObject: [{ fee_ym: "202512", assay_item_name: "eGFR", assay_value: "34.6", unit_data: "ml/min/1.73m2" }],
       },
@@ -2154,7 +2159,7 @@ test("需核實依嚴重度排序，區間敘述只列符合的數值，單位�
     userInfo: { gender: "M" },
     userInput: { REPORT_DATE: "2026-07-23" },
     rawSources: {
-      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物" }] },
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: "METFORMIN HCL" }] },
       labData: {
         rObject: [
           { fee_ym: "202512", assay_item_name: "eGFR", assay_value: "43.3", unit_data: "mL/min/1.73m︿2" },
@@ -3012,4 +3017,63 @@ test("未過濾版本可以取得，供頁面對照濾前濾後", () => {
   assert.ok(full.includes("Organism 1"), "未過濾版要看得到濾掉了什麼");
   for (const text of [filtered, full]) assert.ok(text.includes("Creatinine=2.1"), "核心指標兩份都要有");
   assert.ok(full.length > filtered.length);
+});
+
+// ── 外部審查回報的三個錯誤：逐筆核對、UACR 單位、metformin 歸屬 ──────────
+
+test("數值核對是逐項配對，不是整份比對", () => {
+  // 審查重現的案例：來源有 HbA1c 8.4 與 Glu-AC 315，模型把 315 掛到 HbA1c 上。
+  // 舊版只檢查「315 有沒有出現在來源某處」，於是整份放行。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { order_code: "09006C", assay_item_name: "HbA1c", assay_value: "8.4", fee_ym: "11406" },
+          { order_code: "09005C", assay_item_name: "Glu-AC", assay_value: "315", fee_ym: "11406" },
+        ],
+      },
+    },
+  });
+  const parse = (narrative, cited) => parseLabNarrative(JSON.stringify({ narrative, cited_values: cited }), facts);
+
+  const bad = parse("您的糖化血色素為 315 %，偏高。", [{ item: "HbA1c", value: "315" }]);
+  assert.deepEqual(bad.unverifiedValues.map((item) => `${item.item}=${item.value}`), ["HbA1c=315"]);
+
+  const good = parse("您的糖化血色素 8.4 %，飯前血糖 315 mg/dL。", [
+    { item: "HbA1c", value: "8.4" },
+    { item: "Glu-AC", value: "315" },
+  ]);
+  assert.deepEqual(good.unverifiedValues, []);
+});
+
+test("UACR 必須是比值（mg/g），濃度（mg/L）不得當成 UACR", () => {
+  // 尿液微量白蛋白濃度與 UACR 差一個肌酸酐分母，數字接近但意義不同。
+  // 把 350 mg/L 讀成 UACR 350 會直接把病人推進「巨量蛋白尿」。
+  const of = (name, value, unit) => extractLabFindings(extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: { labData: { rObject: [{ order_code: "12021C", assay_item_name: name, assay_value: value, unit_data: unit, fee_ym: "11406" }] } },
+  })).find((item) => item.analyte === "UACR");
+
+  assert.equal(of("尿液微量白蛋白", "350", "mg/L"), undefined);
+  assert.equal(of("Albumin/Creatinine Ratio", "350", "mg/g")?.max, 350);
+});
+
+test("metformin 的腎功能提示只在真的用 metformin 時觸發", () => {
+  // 舊版比對的是「抗糖尿病藥物」這個 ATC 分類，於是只打胰島素的病人
+  // 也會收到 metformin 的劑量提醒。
+  const hits = (ing) => {
+    const facts = extractPatientFacts({
+      userInput: { REPORT_DATE: "2026-08-03" },
+      rawSources: {
+        medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_atc5_name: "抗糖尿病藥物", drug_ing_name: ing }] },
+        labData: { rObject: [{ order_code: "12015C", assay_item_name: "eGFR", assay_value: "25", fee_ym: "11406" }] },
+      },
+    });
+    return evaluateThresholds(extractLabFindings(facts), facts).some((hit) => /metformin/i.test(hit.clinicianMessage));
+  };
+
+  assert.equal(hits("INSULIN GLARGINE"), false);
+  assert.equal(hits("DAPAGLIFLOZIN"), false);
+  assert.equal(hits("METFORMIN HCL"), true);
 });

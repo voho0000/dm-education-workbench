@@ -104,7 +104,18 @@ const MATCHERS: Matcher[] = [
     // 只認第一種的話，寫成其他形式的紀錄會被當成完全沒做這項檢查——
     // 而這一項正是早期腎病變唯一能抓到的指標。
     analyte: "UACR",
-    name: /Albumin\s*\/\s*Creatinine|\bU?ACR\b|微量白蛋白|白蛋白.{0,6}肌酸酐.{0,4}比/i,
+    name: /Albumin\s*\/\s*Creatinine|\bU?ACR\b|白蛋白.{0,6}肌酸酐.{0,4}比/i,
+    /*
+     * 必須限制單位為 mg/g（或 mg/gCr）。
+     *
+     * UACR 是「白蛋白對肌酸酐的比值」，單位一定是 mg/g。「尿液微量白蛋白」
+     * 單獨測是濃度，單位 mg/L，兩者數字級距接近但意義完全不同——把
+     * 「尿液微量白蛋白 350 mg/L」當成「UACR 350 mg/g」會直接把病人判成
+     * 巨量白蛋白尿、觸發腎臟主題與加密追蹤。外部審查抓到這一點，屬實。
+     *
+     * 「微量白蛋白」因此從名稱樣式移除：它指的是濃度那一項，不是比值。
+     */
+    unit: /mg\s*\/\s*g(Cr)?/i,
   },
   { analyte: "HbA1c", name: /^(HbA1c|Hb\s*A1c)/i, unit: /%/ },
   {
@@ -458,9 +469,22 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
     });
   }
 
-  // 用藥安全：metformin 與腎功能
-  const usesAntidiabetic = facts.medicationClasses.some((item) => /抗糖尿病|metformin|雙胍|胰島素/i.test(item.atcClass));
-  if (egfr && usesAntidiabetic) {
+  /*
+   * 用藥安全：metformin 與腎功能。
+   *
+   * 觸發條件必須是**真的有 metformin**。先前用 ATC 分類含「抗糖尿病」或「胰島素」
+   * 就算數，於是只打胰島素、從未用過 metformin 的病人也會收到
+   * 「此腎功能下 metformin 屬禁用」——那是明確錯誤的藥物安全提示。
+   * 外部審查用「只有 INSULIN＋eGFR 25」重現，屬實。
+   *
+   * 成分名是可靠訊號：ATC5 分類太粗（SGLT2i 也叫「抗糖尿病藥物」），
+   * 而 drug_ing_name 直接寫 METFORMIN HCL。中文品名與雙胍類寫法一併認。
+   */
+  const METFORMIN = /metformin|二甲雙胍|雙胍/i;
+  const usesMetformin =
+    facts.medicationIngredients.some((name) => METFORMIN.test(name)) ||
+    facts.medicationClasses.some((item) => METFORMIN.test(item.atcClass));
+  if (egfr && usesMetformin) {
     if (egfr.min < 30) {
       const r = rule("metformin-egfr-30");
       hits.push({

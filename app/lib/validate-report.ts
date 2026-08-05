@@ -79,6 +79,9 @@ const REQUIRED_V14_HEADINGS = [
  */
 const REQUIRED_MODULE_HEADINGS = [
   "【觀察摘要：",
+  // 先前漏了這一段。③ 呼叫失敗時短期建議整段消失，而檢查清單沒有它，
+  // 於是驗證照樣宣稱六段完整——外部審查重現了 hasShortTerm=false 但 passed=true。
+  "【短期建議：",
   "【中期目標：",
   "【併發症風險：",
   "【預防叮嚀：",

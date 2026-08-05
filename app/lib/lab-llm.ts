@@ -188,11 +188,29 @@ export function parseLabReview(raw: string, facts: PatientFacts): LabReviewCheck
 
   // 只檢查「有解析出數字」的引用。定性結果（3+、(-)、Negative）沒有數字可比，
   // 不能因此判為不可信——那是判讀器的職責範圍，不是抄寫問題。
+  /*
+   * 逐「項目＋數值」比對。只比數值的話，判讀器把 A 項目的數字寫到 B 項目名下
+   * 也會通過——病人版那邊實測就發生過血糖 315 被寫成「糖化血色素 315 %」。
+   * 名稱比對放寬到雙向包含（判讀器常補中文或括號），但不放寬到「任一項目」。
+   */
+  const normalise = (text: string) => text.toLowerCase().replace(/[（）()\[\]｜|、，,。.\s_-]/g, "");
+  const sourceByItem = facts.labItems.map((entry) => ({
+    key: normalise(entry.itemName),
+    values: new Set(entry.rawValues.map(numeric).filter((n): n is string => n !== null)),
+  }));
+  const belongsTo = (itemName: string, n: string) => {
+    const key = normalise(itemName);
+    if (!key) return false;
+    return sourceByItem
+      .filter((row) => row.key === key || row.key.includes(key) || key.includes(row.key))
+      .some((row) => row.values.has(n));
+  };
+
   const unverifiedValues = abnormal.filter((item) => {
     for (const field of [item.worst, item.worstOther]) {
       if (!field) continue;
       const n = numeric(field);
-      if (n !== null && !sourceValues.has(n)) return true;
+      if (n !== null && !belongsTo(item.item, n)) return true;
     }
     return false;
   });

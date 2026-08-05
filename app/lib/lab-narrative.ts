@@ -194,18 +194,36 @@ export function parseLabNarrative(raw: string, facts: PatientFacts): LabNarrativ
     .map((item) => ({ item: String(item.item ?? "").trim(), value: String(item.value ?? "").trim() }))
     .filter((item) => item.value);
 
-  // 來源中實際存在的數值
-  const sourceValues = new Set<string>();
-  for (const item of facts.labItems) {
-    for (const value of item.rawValues) {
-      const n = numeric(value);
-      if (n !== null) sourceValues.add(n);
-    }
-  }
+  /*
+   * 逐「項目＋數值」比對，不是只比數值。
+   *
+   * 先前只確認數字曾出現在病人的**任一**檢驗裡，於是模型把血糖 315 mg/dL
+   * 寫成「糖化血色素 315 %」照樣通過——315 確實存在，只是屬於另一個項目。
+   * 外部審查實測到這個洞，我重現了：unverified=[]、uncited=[]，完全放行。
+   *
+   * 現在要求兩件事同時成立：項目名稱在來源找得到，而且那個數值屬於**那個項目**。
+   * 名稱比對放寬到雙向包含（模型常寫「糖化血色素（HbA1c）」而來源是「HbA1c」），
+   * 但不放寬到「任一項目」——那正是這個洞的成因。
+   */
+  const normalise = (text: string) =>
+    text
+      .toLowerCase()
+      .replace(/[（）()\[\]｜|、，,。.\s_-]/g, "")
+      .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
+
+  const sourceByItem = facts.labItems.map((item) => ({
+    key: normalise(item.itemName),
+    values: new Set(item.rawValues.map(numeric).filter((n): n is string => n !== null)),
+  }));
 
   const unverifiedValues = cited.filter((item) => {
     const n = numeric(item.value);
-    return n !== null && !sourceValues.has(n);
+    if (n === null) return false;
+    const key = normalise(item.item);
+    if (!key) return true;
+    const owners = sourceByItem.filter((row) => row.key === key || row.key.includes(key) || key.includes(row.key));
+    // 名稱完全找不到，或找得到但那個項目沒有這個數值——兩種都不算核實
+    return !owners.some((row) => row.values.has(n));
   });
 
   // 文中每一個數字都要能對應到 cited_values 或允許清單，否則就是沒被驗證過的數字
