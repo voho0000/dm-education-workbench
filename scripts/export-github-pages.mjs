@@ -2,8 +2,14 @@ import { cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import process from "node:process";
 
-const outputDir = path.resolve(process.argv[2] ?? "github-pages/dm-education-report");
-const publicUrl = "https://voho0000.github.io/dm-education-report/";
+const outputDir = path.resolve(process.argv[2] ?? "github-pages/dm-education-workbench");
+/*
+ * 站台從 voho0000.github.io 的子目錄搬到本 repo 自己的 Pages，比較好管理
+ * （程式碼與部署產物在同一個 repo，版本對得起來）。
+ *
+ * 只有 og:image 需要絕對網址，其餘資產一律走 ./ 相對路徑，所以換路徑不會壞。
+ */
+const publicUrl = process.env.PAGES_URL ?? "https://voho0000.github.io/dm-education-workbench/";
 
 const workerUrl = new URL("../dist/server/index.js", import.meta.url);
 workerUrl.searchParams.set("static-export", `${Date.now()}`);

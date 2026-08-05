@@ -73,8 +73,8 @@ test("三份固定內容攤在頁面上，逐條看得到，且標明未核准",
   const html = await (await render()).text();
 
   assert.match(html, /報告會用到的固定內容/);
-  assert.match(html, /衛教模組 draft-0\.2/);
-  assert.match(html, /自我照護模組 draft-0\.1/);
+  assert.match(html, /衛教模組 draft-0\.3/);
+  assert.match(html, /自我照護模組 draft-0\.2/);
   assert.match(html, /指引門檻表 2022-guideline-extract-0\.3/);
   assert.match(html, /DRAFT・未經醫療團隊核准/);
 
@@ -116,7 +116,7 @@ test("示範資料是合成的，公開產物不得出現真實病人", async ()
   assert.match(html, /示範資料為虛構，非真實病人/);
 
   // 示範資料是點擊後才填入的，只存在於 JS bundle——而 bundle 正是會被公開的東西。
-  const dir = new URL("../github-pages/dm-education-report/assets/", import.meta.url);
+  const dir = new URL("../github-pages/dm-education-workbench/assets/", import.meta.url);
   const files = await readdir(dir);
   const bundles = await Promise.all(
     files.filter((name) => name.endsWith(".js")).map((name) => readFile(new URL(name, dir), "utf8")),
