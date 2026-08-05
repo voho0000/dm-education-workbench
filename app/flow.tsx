@@ -20,27 +20,35 @@ type FlowNode = {
 const W = 196;
 const H = 48;
 
+/*
+ * 由上往下：來源 → 判定 → 三次呼叫並排 → 組裝 → 兩份成品。
+ * 三次呼叫是並行的，所以擺同一列；上下相鄰的兩列才代表先後。
+ */
 export const FLOW_NODES: FlowNode[] = [
-  { id: "ingest", x: 16, y: 16, title: "健保申報 JSON", sub: "用藥 · 檢驗 · R/PR · DCSI", tone: "flowNeutral" },
-  { id: "decide", x: 16, y: 112, title: "確定性事實與判定", sub: "主題 · 目標 · 門檻（程式）", tone: "flowNeutral" },
-  { id: "selector", x: 262, y: 16, title: "① 模組挑選", sub: "只回代碼與優先序", tone: "flowLlm" },
-  { id: "labReview", x: 262, y: 112, title: "② 檢驗判讀", sub: "讀原始紀錄", tone: "flowLlm" },
-  { id: "narrative", x: 262, y: 208, title: "③ 檢驗敘述", sub: "寫成病人看的段落", tone: "flowLlm" },
-  { id: "assemble", x: 508, y: 112, title: "驗證與組裝", sub: "數值比對 · 禁止事項", tone: "flowNeutral" },
-  { id: "patientReport", x: 508, y: 16, title: "病人版衛教報告", sub: "正文來自固定模組", tone: "flowOut" },
-  { id: "clinicianReport", x: 508, y: 208, title: "醫師版報告", sub: "附指引章表與頁次", tone: "flowOut" },
+  { id: "ingest", x: 262, y: 16, title: "健保申報 JSON", sub: "用藥 · 檢驗 · R/PR · DCSI", tone: "flowNeutral" },
+  { id: "decide", x: 262, y: 112, title: "確定性事實與判定", sub: "主題 · 目標 · 門檻（程式）", tone: "flowNeutral" },
+  { id: "selector", x: 16, y: 208, title: "① 模組挑選", sub: "只回代碼與優先序", tone: "flowLlm" },
+  { id: "labReview", x: 262, y: 208, title: "② 檢驗判讀", sub: "讀原始紀錄", tone: "flowLlm" },
+  { id: "narrative", x: 508, y: 208, title: "③ 檢驗敘述", sub: "寫成病人看的段落", tone: "flowLlm" },
+  { id: "assemble", x: 262, y: 304, title: "驗證與組裝", sub: "數值比對 · 禁止事項", tone: "flowNeutral" },
+  { id: "patientReport", x: 140, y: 400, title: "病人版衛教報告", sub: "正文來自固定模組", tone: "flowOut" },
+  { id: "clinicianReport", x: 384, y: 400, title: "醫師版報告", sub: "附指引章表與頁次", tone: "flowOut" },
 ];
 
 const FLOW_EDGES = [
-  "M114 64 L114 112",
-  "M212 40 L262 40",
-  "M212 136 L262 136",
-  "M212 152 L237 152 L237 232 L262 232",
-  "M458 40 L483 40 L483 130 L508 130",
-  "M458 136 L508 136",
-  "M458 232 L483 232 L483 142 L508 142",
-  "M606 112 L606 64",
-  "M606 160 L606 208",
+  // 來源 → 判定
+  "M360 64 L360 112",
+  // 判定 → 三次呼叫（同一列代表並行）
+  "M360 160 L360 184 L114 184 L114 208",
+  "M360 160 L360 208",
+  "M360 160 L360 184 L606 184 L606 208",
+  // 三次呼叫 → 組裝
+  "M114 256 L114 280 L360 280 L360 304",
+  "M360 256 L360 304",
+  "M606 256 L606 280 L360 280 L360 304",
+  // 組裝 → 兩份成品
+  "M360 352 L360 376 L238 376 L238 400",
+  "M360 352 L360 376 L482 376 L482 400",
 ];
 
 /**
@@ -71,7 +79,7 @@ export function FlowDiagram({
   return (
     <svg
       className={compact ? "flowDiagram flowMini" : "flowDiagram"}
-      viewBox="0 0 720 296"
+      viewBox="0 0 720 464"
       role="img"
       aria-label={
         active
