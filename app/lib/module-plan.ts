@@ -529,7 +529,7 @@ export function resolvePlan(selection: SelectorOutput | null, facts: PatientFact
 
 function draftBanner(narrative = false): string[] {
   const extra = narrative
-    ? ["※ 本報告的「您的檢驗數值」一段由模型直接撰寫，未經醫療團隊逐句核准；數值已由程式逐一比對來源。"]
+    ? ["※ 本報告的「觀察摘要」「短期建議」「中期目標」三段由模型直接撰寫，未經醫療團隊逐句核准；數值已由程式逐一比對來源，目標值取自指引門檻表。"]
     : [];
   if (MODULE_CATALOG_APPROVED) return extra.length ? [...extra, ""] : [];
   return [
@@ -675,24 +675,6 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
     );
   }
 
-  // 緊急就醫時機放在最前面。這是全份唯一「延誤會造成傷害」的內容，
-  // 其餘都是參考資料——沒有人會在急性事件當下翻兩百行去找它。
-  if (plan.urgentSigns.length) {
-    section(lines, "什麼情況要立刻就醫");
-    // 分兩組。先前是一串 1–9，要逐條讀完才知道哪幾條該打 119。
-    // 「儘速就醫；若呼吸困難明顯再打 119」這種混合式的主要指示是儘速就醫，
-    // 放進 119 那組會誇大。只有整條就是叫人打 119 的才算。
-    const needs119 = (text: string) => /119/.test(text) && !/儘速就醫|當天/.test(text);
-    const groups: Array<[string, string[]]> = [
-      ["立即撥打 119", plan.urgentSigns.filter(needs119)],
-      ["儘速就醫", plan.urgentSigns.filter((item) => !needs119(item))],
-    ];
-    for (const [title, items] of groups) {
-      if (!items.length) continue;
-      lines.push(`◆ ${title}`, "");
-      items.forEach((item, index) => lines.push(`${index + 1}. ${item}`, ""));
-    }
-  }
 
 
   const topicIds = plan.patientModuleIds.filter((id) => !["BASE-01", "TYPE-UNCLEAR"].includes(id));
@@ -716,29 +698,6 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
     }
   }
 
-  if (orderedIds.length) {
-    // 有些主題是風險預測選進來的。原本這句話掛在「持續留意」那一區，
-    // 那一區併進來之後若不補回來，病人會把預測讀成已經確診。
-    const fromPrediction = orderedIds.some((id) => {
-      const decision = byId.get(id) ?? byId.get(topicIds.find((other) => id.startsWith(other.split("-")[0])) ?? "");
-      return decision?.kind === "prevention-active" || decision?.kind === "prevention-moderate";
-    });
-    section(lines, "併發症風險：與您有關的健康重點");
-    lines.push(
-      "以下項目是依您的健康紀錄挑選出來，建議您特別注意。如果您不確定自己是否有相關診斷，請在回診時向醫療團隊確認。",
-      ...(fromPrediction
-        ? ["其中有些項目來自風險評估而不是診斷，列出來是為了提早注意，不代表您已經有這個疾病。"]
-        : []),
-      "",
-    );
-    for (const id of orderedIds) {
-      const extras = topicIds
-        .filter((other) => /-T[12]$/.test(other) && other.split("-")[0] === id.split("-")[0])
-        .map((other) => MODULE_BY_ID.get(other)?.patientText)
-        .filter((text): text is string => Boolean(text));
-      emit(id, "", extras);
-    }
-  }
 
   if (options.labNarrative) {
     // LLM 直接寫的連貫段落。固定句型只涵蓋程式有規則的項目，而且會把
@@ -772,6 +731,13 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
     }
   }
 
+  // 短期建議：LLM 與觀察摘要同一次呼叫產生，屬於個人化內容。
+  // 模型沒回這一段就整段不印——寧可少一節，也不要放一段沒人寫過的空話。
+  if (options.labNarrative?.shortTerm) {
+    section(lines, "短期建議：這一兩週可以開始做的事");
+    lines.push(options.labNarrative.shortTerm, "");
+  }
+
   /**
    * 中期目標。
    *
@@ -781,9 +747,13 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
    * 追蹤間隔併進來：目標與「什麼時候再驗一次」分成兩段的話，病人得自己配對。
    */
   const patientTargets = plan.targets.targets.filter((item) => item.value && !item.needsClinicianConfirmation);
-  if (patientTargets.length || plan.followUp.text) {
+  if (options.labNarrative?.midTerm || patientTargets.length || plan.followUp.text) {
     section(lines, "中期目標：下一階段要達到的數字");
-    if (patientTargets.length) {
+    // 目標數字一律出自門檻表。LLM 拿到的就是下面這份清單，它只負責寫成病人的話——
+    // 讓模型自己訂目標值會失去可追溯性，也可能跟醫師版對不上。
+    if (options.labNarrative?.midTerm) {
+      lines.push(options.labNarrative.midTerm, "");
+    } else if (patientTargets.length) {
       // 出處只在這裡講一次。逐條掛〔章表，p.頁次〕會把頁碼變成病人版追溯不到的
       // 裸數字，而且對病人沒有意義——要回查的是醫師，醫師版本來就逐條附了。
       lines.push("以下是依中華民國糖尿病學會指引、對照您的狀況推出的控制目標。實際數字仍以醫療團隊的評估為準。", "");
@@ -791,10 +761,10 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
         const rule = target.ruleId ? RULES_BY_ID.get(target.ruleId) : undefined;
         lines.push(`◆ ${target.metric}：${rule?.patientStatement ?? target.value}`, "");
       }
-      // 「現在離目標多遠」不放這裡：那句話已經貼在【您的檢驗數值】對應的數值下面，
-      // 兩處都印就會出現一字不差的重複句。
     }
-    if (plan.followUp.text) {
+    // LLM 版的中期目標已經把追蹤時間寫進去了（那份間隔也是餵給它的材料之一），
+    // 再印一次就是同一件事講兩遍。
+    if (!options.labNarrative?.midTerm && plan.followUp.text) {
       lines.push("下次檢查的建議時間：", "");
       lines.push(plan.followUp.text, "");
     }
@@ -803,6 +773,30 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
   // 「照護重點」與「每天可以做的事」是我們的內部分類（跨主題共用區塊 vs
   // DSMES 自我照護模組），不是病人的分類——兩區都是「要做的事」，分成兩塊
   // 只會讓人以為有什麼差別。合成一區。
+  if (orderedIds.length) {
+    // 有些主題是風險預測選進來的。原本這句話掛在「持續留意」那一區，
+    // 那一區併進來之後若不補回來，病人會把預測讀成已經確診。
+    const fromPrediction = orderedIds.some((id) => {
+      const decision = byId.get(id) ?? byId.get(topicIds.find((other) => id.startsWith(other.split("-")[0])) ?? "");
+      return decision?.kind === "prevention-active" || decision?.kind === "prevention-moderate";
+    });
+    section(lines, "併發症風險：與您有關的健康重點");
+    lines.push(
+      "以下項目是依您的健康紀錄挑選出來，建議您特別注意。如果您不確定自己是否有相關診斷，請在回診時向醫療團隊確認。",
+      ...(fromPrediction
+        ? ["其中有些項目來自風險評估而不是診斷，列出來是為了提早注意，不代表您已經有這個疾病。"]
+        : []),
+      "",
+    );
+    for (const id of orderedIds) {
+      const extras = topicIds
+        .filter((other) => /-T[12]$/.test(other) && other.split("-")[0] === id.split("-")[0])
+        .map((other) => MODULE_BY_ID.get(other)?.patientText)
+        .filter((text): text is string => Boolean(text));
+      emit(id, "", extras);
+    }
+  }
+
   if (plan.sharedBlockIds.length || plan.selfCareModuleIds.length) {
     section(lines, "預防叮嚀：日常照護");
     for (const id of plan.sharedBlockIds) {
@@ -833,6 +827,30 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
       if (changed) text = renumber(text);
       lines.push(`◆ ${moduleDef.title}`, "");
       lines.push(text, "");
+    }
+  }
+
+  /*
+   * 就醫警訊放在最後。
+   *
+   * 先前放在最前面，理由是「唯一延誤會造成傷害的內容」。改成最後是資料負責人的
+   * 決定：個人化的內容（觀察摘要、短期建議、中期目標）才值得排前面，模組型的
+   * 通用衛教網路上就找得到。取捨要記著——病人沒讀完就放下時，紅旗清單是最先漏掉的。
+   */
+  if (plan.urgentSigns.length) {
+    section(lines, "什麼情況要立刻就醫");
+    // 分兩組。先前是一串 1–9，要逐條讀完才知道哪幾條該打 119。
+    // 「儘速就醫；若呼吸困難明顯再打 119」這種混合式的主要指示是儘速就醫，
+    // 放進 119 那組會誇大。只有整條就是叫人打 119 的才算。
+    const needs119 = (text: string) => /119/.test(text) && !/儘速就醫|當天/.test(text);
+    const groups: Array<[string, string[]]> = [
+      ["立即撥打 119", plan.urgentSigns.filter(needs119)],
+      ["儘速就醫", plan.urgentSigns.filter((item) => !needs119(item))],
+    ];
+    for (const [title, items] of groups) {
+      if (!items.length) continue;
+      lines.push(`◆ ${title}`, "");
+      items.forEach((item, index) => lines.push(`${index + 1}. ${item}`, ""));
     }
   }
 

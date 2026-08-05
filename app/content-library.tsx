@@ -237,7 +237,7 @@ export function ContentLibrary() {
           <p className="eyebrow">CONTENT</p>
           <h2>報告會用到的固定內容</h2>
           <p className="fieldNote">
-            唯讀。病人讀到的每一句衛教文字都出自這裡，模型不改寫（唯一例外是病人版的「您的檢驗數值」一段）。
+            唯讀。併發症風險與預防叮嚀的每一句都出自這裡，模型不改寫；觀察摘要、短期建議、中期目標三段則由模型撰寫。
             內容改動走版本控制與送審，不在頁面上編輯。
           </p>
         </div>

@@ -20,7 +20,7 @@ import { MODULE_CATALOG_VERSION } from "./lib/education-modules";
 import { formatPatientJson } from "./lib/format-patient";
 import { GeminiRequestError, callGemini } from "./lib/gemini-client";
 import { describeGeminiFailure, type GeminiFailure } from "./lib/gemini-errors";
-import { RULES_SOURCE, RULES_VERSION } from "./lib/guideline-rules";
+import { RULES_BY_ID, RULES_SOURCE, RULES_VERSION } from "./lib/guideline-rules";
 import { LAB_NARRATIVE_PROMPT, buildNarrativeInput, parseLabNarrative } from "./lib/lab-narrative";
 import { LAB_REVIEW_PROMPT, labSectionOf, parseLabReview } from "./lib/lab-llm";
 import {
@@ -67,7 +67,7 @@ const PROMPTS: Array<{ id: PromptId; label: string; text: string; role: string }
   {
     id: "narrative",
     label: "③ 檢驗敘述",
-    role: "把檢驗結果寫成給病人看的段落。這是報告中唯一未經逐句核准的文字。",
+    role: "寫觀察摘要、短期建議、中期目標三段。這是報告中唯一未經逐句核准的文字。",
     text: LAB_NARRATIVE_PROMPT,
   },
 ];
@@ -100,7 +100,7 @@ const RECIPE = {
 } as const;
 
 const OUTPUT_TABS: Array<{ id: OutputTab; label: string; filename: string; note: string }> = [
-  { id: "patient", label: "病人版衛教報告", filename: "病人版衛教報告.txt", note: "由固定模組組裝，只有「您的檢驗數值」一段是模型寫的。" },
+  { id: "patient", label: "病人版衛教報告", filename: "病人版衛教報告.txt", note: "併發症風險與預防叮嚀逐字來自固定模組；觀察摘要、短期建議、中期目標三段由模型撰寫。" },
   { id: "clinician", label: "醫師版報告", filename: "醫師版報告.txt", note: "由固定模組組裝，附指引章表與頁次。" },
   { id: "rawSelector", label: "① 原始回應", filename: "原始回應-模組挑選.txt", note: "模組挑選的完整回應，未解析。它的意見改不了程式的主題判定，僅供核對。" },
   { id: "rawLabReview", label: "② 原始回應", filename: "原始回應-檢驗判讀.txt", note: "檢驗判讀的完整回應，未解析。報告中只採用通過數值比對的部分。" },
@@ -269,9 +269,24 @@ export default function Home() {
     [factsText, decisionsText],
   );
   const labInput = useMemo(() => labSectionOf(llmText), [llmText]);
+  // 中期目標的數字由程式從門檻表推出，當成材料餵給③；模型只負責寫成病人的話。
   const narrativeInput = useMemo(
-    () => (patientFacts ? buildNarrativeInput(llmText, patientFacts) : ""),
-    [llmText, patientFacts],
+    () =>
+      patientFacts && preview
+        ? buildNarrativeInput(llmText, patientFacts, {
+            // 餵病人版措辭，不是醫師版。餵 statement 的話模型會照抄
+            // 「三酸甘油酯目標為低於 150 mg/dL；達到或超過 500 mg/dL 時需藥物處理」，
+            // 後半句是講給醫師聽的。
+            targets: preview.targets.targets
+              .filter((item) => item.value && !item.needsClinicianConfirmation)
+              .map((item) => ({
+                metric: item.metric,
+                value: (item.ruleId ? RULES_BY_ID.get(item.ruleId)?.patientStatement : null) ?? (item.value as string),
+              })),
+            followUp: preview.followUp.text,
+          })
+        : "",
+    [llmText, patientFacts, preview],
   );
 
   const composed = useMemo<ComposedInput>(
@@ -611,7 +626,7 @@ export default function Home() {
       llm(
         "narrative",
         "③ 檢驗敘述",
-        "把檢驗結果寫成病人看得懂的段落。這是報告裡唯一未經逐句核准的文字。",
+        "寫觀察摘要、短期建議、中期目標三段。目標數字由上一站的門檻表決定，模型只負責寫成病人的話。",
         narrativeInput,
         "rawNarrative",
       ),
@@ -1037,7 +1052,7 @@ export default function Home() {
           <strong>上線前的必要提醒</strong>
           <p>
             衛教模組 {MODULE_CATALOG_VERSION}、自我照護模組 {SELF_CARE_VERSION}、指引門檻表 {RULES_VERSION}
-            （{RULES_SOURCE}）均尚未經醫療團隊核准。病人版的「您的檢驗數值」一段由模型撰寫，數值已由程式逐一比對來源，
+            （{RULES_SOURCE}）均尚未經醫療團隊核准。病人版的觀察摘要、短期建議、中期目標三段由模型撰寫，數值已由程式逐一比對來源，
             但文字未經逐句核准。正式提供病人前，仍應由醫療團隊核准固定內容、prompt 與模型版本，並建立人工抽查與版本紀錄。
           </p>
         </div>

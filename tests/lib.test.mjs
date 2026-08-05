@@ -1838,10 +1838,14 @@ test("病人版的分區與排版讓一般民眾讀得下去", () => {
   assert.match(report, /◆ 立即撥打 119/);
   assert.match(report, /◆ 儘速就醫/);
 
-  // 緊急就醫時機是唯一延誤會造成傷害的內容，必須在前面
+  // 排序由資料負責人定：個人化的內容在前，模組型的通用衛教在後，就醫警訊收尾。
+  // 先前相反（就醫警訊在最前），理由是它是唯一延誤會造成傷害的內容——
+  // 取捨記在 assemblePatientReport 的註解裡。
+  const order = ["【觀察摘要：", "【中期目標：", "【併發症風險：", "【預防叮嚀：", "什麼情況要立刻就醫"];
+  const positions = order.map((label) => report.indexOf(label));
   assert.ok(
-    report.indexOf("什麼情況要立刻就醫") < report.indexOf("【預防叮嚀：日常照護】"),
-    "就醫時機不能放在最後",
+    positions.every((value, index) => value >= 0 && (index === 0 || value > positions[index - 1])),
+    `六大段落順序不對：${JSON.stringify(order.map((l, i) => [l, positions[i]]))}`,
   );
 
   // 追蹤時程不夾帶檢查技術名稱

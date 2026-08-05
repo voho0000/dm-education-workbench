@@ -45,10 +45,20 @@ export const LAB_NARRATIVE_PROMPT = `你要為一位第 2 型糖尿病人寫「�
 - 不得敘述趨勢、先後順序、「最近一次」、「已改善」、「持續惡化」。這批紀錄只有費用年月、沒有採檢日期。
 - 不得把數值寫成目前狀態；數值可能來自兩年前的急性事件。
 
+除了「觀察摘要」，你還要寫兩段：
+
+**短期建議**：病人這一兩週內就能開始做的事，側重生活形態調整與用藥安全提醒。要具體到可執行（做什麼、什麼時候做、做多少），不要寫「注意飲食」這種沒有動作的句子。用藥只能提「安全提醒」——例如生病無法進食時哪類藥要先與醫療團隊確認——不得叫病人自行開始、停止或調整任何藥物。
+
+**中期目標**：下一階段（約三個月至下次回診）要達到的控制指標。輸入會給你一份「程式依指引推出的目標值」，**目標數字一律照抄那份清單，不得自己訂、不得換算、不得補上清單沒有的指標**。你的工作是把它寫成病人的話，並依這位病人的實際數值說明離目標還有多遠。清單是空的就不要編。
+
+三段都適用上面的寫作原則與嚴格禁止事項。
+
 輸出格式：只輸出一個 JSON 物件，不要加說明文字或程式碼圍籬。
 
 {
-  "narrative": "整段內容，段落之間用 \\n\\n 分隔",
+  "narrative": "觀察摘要整段內容，段落之間用 \\n\\n 分隔",
+  "short_term": "短期建議整段內容",
+  "mid_term": "中期目標整段內容",
   "cited_values": [
     { "item": "項目名稱，逐字照抄來源", "value": "你在文中引用的數值，逐字照抄" }
   ],
@@ -61,17 +71,37 @@ export const LAB_NARRATIVE_PROMPT = `你要為一位第 2 型糖尿病人寫「�
  * 敘述器的完整輸入。網頁與管線共用同一個組裝函式——先前兩邊各自拼字串，
  * 只要有一邊忘了加缺檢清單，那一邊的輸出就會少一段而沒有任何症狀。
  */
-export function buildNarrativeInput(llmText: string, facts: PatientFacts): string {
+export function buildNarrativeInput(
+  llmText: string,
+  facts: PatientFacts,
+  /**
+   * 程式依門檻表推出的目標與追蹤間隔。
+   *
+   * 中期目標的數字由程式決定、模型只負責寫成病人的話——讓模型自己訂目標值
+   * 會失去可追溯性，也可能跟醫師版對不上。清單為空時提示模型不要編。
+   */
+  goals?: { targets: Array<{ metric: string; value: string }>; followUp: string },
+): string {
   const missing = missingCoreAnalytes(extractLabFindings(facts));
   return [
     labSectionOf(llmText),
     "【程式初步判定：可能完全沒有紀錄的核心指標（待你核對）】",
     missing.length ? missing.map((item) => `- ${item}`).join("\n") : "（無，核心指標都有紀錄）",
+    "【程式依指引推出的目標值（中期目標一律照抄，不得自訂）】",
+    goals?.targets.length
+      ? goals.targets.map((item) => `- ${item.metric}：${item.value}`).join("\n")
+      : "（無，這位病人解不出可用的目標值——請不要在中期目標段編任何數字）",
+    "【程式依指引推出的追蹤間隔】",
+    goals?.followUp?.trim() ? goals.followUp.trim() : "（無）",
   ].join("\n\n");
 }
 
 export type LabNarrativeCheck = {
   narrative: string;
+  /** 短期建議：一兩週內能開始做的事 */
+  shortTerm: string;
+  /** 中期目標：數字由程式給，模型只負責寫成病人的話 */
+  midTerm: string;
   /**
    * 程式判定為缺檢、但敘述器在原始紀錄中找到的項目。
    *
@@ -138,6 +168,11 @@ export function parseLabNarrative(raw: string, facts: PatientFacts): LabNarrativ
   }
   const record = (parsed ?? {}) as Record<string, unknown>;
   const narrative = String(record.narrative ?? "").trim();
+  const shortTerm = String(record.short_term ?? "").trim();
+  const midTerm = String(record.mid_term ?? "").trim();
+  // 核實與禁止事項掃描對三段一視同仁。只驗觀察摘要的話，另外兩段等於沒人看，
+  // 而短期建議正是最容易滑出「叫病人自行停藥」的一段。
+  const allText = [narrative, shortTerm, midTerm].filter(Boolean).join("\n\n");
 
   const cited = (Array.isArray(record.cited_values) ? record.cited_values : [])
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
@@ -162,7 +197,7 @@ export function parseLabNarrative(raw: string, facts: PatientFacts): LabNarrativ
   const citedNumbers = new Set(cited.map((item) => numeric(item.value)).filter((n): n is string => n !== null));
   const uncitedNumbers = [
     ...new Set(
-      [...narrative.matchAll(/(?<![\d.])\d+(?:\.\d+)?(?![\d.])/g)]
+      [...allText.matchAll(/(?<![\d.])\d+(?:\.\d+)?(?![\d.])/g)]
         .map((match) => match[0])
         .filter((raw) => {
           const n = numeric(raw);
@@ -171,19 +206,20 @@ export function parseLabNarrative(raw: string, facts: PatientFacts): LabNarrativ
     ),
   ];
 
-  const bannedPhrases = BANNED.filter((rule) => rule.pattern.test(narrative)).map((rule) => rule.label);
+  const bannedPhrases = BANNED.filter((rule) => rule.pattern.test(allText)).map((rule) => rule.label);
 
   const foundAfterAll = (Array.isArray(record.found_after_all) ? record.found_after_all : [])
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
     .map((item) => ({ item: String(item.item ?? "").trim(), as: String(item.as ?? "").trim() }))
     .filter((item) => item.item);
 
-  return { narrative, foundAfterAll, unverifiedValues, uncitedNumbers, bannedPhrases };
+  return { narrative, shortTerm, midTerm, foundAfterAll, unverifiedValues, uncitedNumbers, bannedPhrases };
 }
 
-/** 病人版渲染。檢查不通過的部分會被標示出來，但文字本身不改寫。 */
-export function formatLabNarrative(check: LabNarrativeCheck): string[] {
-  const lines = [check.narrative];
+/**
+ * 檢查不通過的說明。三段共用同一份——問題是整份回應的，不是某一段的。
+ */
+export function narrativeProblems(check: LabNarrativeCheck): string[] {
   const problems: string[] = [];
   if (check.unverifiedValues.length) {
     problems.push(`引用了來源中找不到的數值：${check.unverifiedValues.map((v) => `${v.item} ${v.value}`).join("、")}`);
@@ -199,6 +235,13 @@ export function formatLabNarrative(check: LabNarrativeCheck): string[] {
       `程式判定為缺檢但實際存在：${check.foundAfterAll.map((v) => `${v.item}（紀錄中寫作 ${v.as}）`).join("、")}——項目名稱比對有漏，需修正`,
     );
   }
+  return problems;
+}
+
+/** 病人版渲染。檢查不通過的部分會被標示出來，但文字本身不改寫。 */
+export function formatLabNarrative(check: LabNarrativeCheck): string[] {
+  const lines = [check.narrative];
+  const problems = narrativeProblems(check);
   if (problems.length) {
     lines.push("", `⚠ 這一段未通過自動檢查，不可直接提供給病人：${problems.join("；")}`);
   }
