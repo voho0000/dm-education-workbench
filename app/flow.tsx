@@ -25,11 +25,12 @@ const H = 48;
  * 三次呼叫是並行的，所以擺同一列；上下相鄰的兩列才代表先後。
  */
 export const FLOW_NODES: FlowNode[] = [
+  { id: "rules", x: 16, y: 16, title: "指引門檻表", sub: "35 條 · 附章表頁次", tone: "flowContent" },
   { id: "ingest", x: 262, y: 16, title: "健保申報 JSON", sub: "用藥 · 檢驗 · R/PR · DCSI", tone: "flowNeutral" },
-  // 固定內容是真正的輸入，不是裝飾：門檻表決定目標與追蹤間隔，模組決定病人讀到的字。
-  // 先前圖上沒畫，等於把決定輸出內容的一半來源藏起來。
-  { id: "rules", x: 16, y: 112, title: "指引門檻表", sub: "35 條 · 附章表頁次", tone: "flowContent" },
-  { id: "decide", x: 262, y: 112, title: "確定性事實與判定", sub: "主題 · 目標 · 門檻（程式）", tone: "flowNeutral" },
+  { id: "decide", x: 16, y: 112, title: "確定性事實與判定", sub: "主題 · 目標 · 門檻（程式）", tone: "flowNeutral" },
+  // 原始 JSON 不會直接餵給模型：程式先整理成好讀文字，②③ 讀的是這一份。
+  // 先前圖上沒有這一格，等於把「模型看到的到底是什麼」漏掉了。
+  { id: "llmText", x: 508, y: 112, title: "LLM 好讀文字", sub: "程式整理 · 不改數值", tone: "flowNeutral" },
   { id: "selector", x: 16, y: 208, title: "① 模組挑選", sub: "只回代碼與優先序", tone: "flowLlm" },
   { id: "labReview", x: 262, y: 208, title: "② 檢驗判讀", sub: "讀原始紀錄", tone: "flowLlm" },
   { id: "narrative", x: 508, y: 208, title: "③ 檢驗敘述", sub: "寫成病人看的段落", tone: "flowLlm" },
@@ -39,20 +40,30 @@ export const FLOW_NODES: FlowNode[] = [
   { id: "clinicianReport", x: 384, y: 400, title: "醫師版報告", sub: "附指引章表與頁次", tone: "flowOut" },
 ];
 
-
+/*
+ * 三次呼叫拿到的東西不一樣，線就要分開畫：
+ *   ① 只拿確定性判定的結果（事實＋主題判定＋已解出的目標）
+ *   ② 只拿 LLM 好讀文字的檢驗段
+ *   ③ 兩者都拿——好讀文字給數值，判定給中期目標的目標值
+ * 先前把判定拉線到 ②，那是錯的：② 從來沒收到過判定結果。
+ */
 const FLOW_EDGES = [
-  // 來源 → 判定
-  "M360 64 L360 112",
-  // 判定 → 三次呼叫（同一列代表並行）
-  "M360 160 L360 184 L114 184 L114 208",
-  "M360 160 L360 208",
-  "M360 160 L360 184 L606 184 L606 208",
+  // 門檻表與原始資料進入判定
+  "M58 64 L58 112",
+  "M360 64 L360 88 L170 88 L170 112",
+  // 原始資料同時整理成好讀文字
+  "M360 64 L360 88 L606 88 L606 112",
+  // 判定 → ①、③
+  "M114 160 L114 208",
+  "M170 160 L170 172 L654 172 L654 208",
+  // 好讀文字 → ②、③
+  "M558 160 L558 188 L360 188 L360 208",
+  "M606 160 L606 208",
   // 三次呼叫 → 組裝
   "M114 256 L114 280 L360 280 L360 304",
   "M360 256 L360 304",
   "M606 256 L606 280 L360 280 L360 304",
   // 固定內容進場
-  "M212 136 L262 136",
   "M508 328 L458 328",
   // 組裝 → 兩份成品
   "M360 352 L360 376 L238 376 L238 400",
@@ -66,7 +77,7 @@ const FLOW_EDGES = [
 export const STATION_TO_NODES: Record<string, string[]> = {
   /** 內容庫不是管線上的一站，但它就是圖上那兩個虛線框。 */
   contentLibrary: ["rules", "modules"],
-  ingest: ["ingest"],
+  ingest: ["ingest", "llmText"],
   decide: ["decide", "rules"],
   selector: ["selector"],
   labReview: ["labReview"],
