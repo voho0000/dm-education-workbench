@@ -13,6 +13,7 @@
  */
 
 import { useState } from "react";
+import { FlowDiagram, STATION_TO_NODES } from "./flow";
 import {
   BEHAVIOR_LABEL,
   CATEGORY_LABEL,
@@ -243,6 +244,11 @@ export function ContentLibrary() {
         </div>
       </div>
       <div className="stepBody">
+        {/* 這三份內容在流程圖上的位置。它們是輸入，不是裝飾——門檻表決定目標與
+            追蹤間隔，模組決定病人讀到的字。 */}
+        <div className="pipeMap">
+          <FlowDiagram highlight={STATION_TO_NODES.contentLibrary} compact />
+        </div>
         <div className="tabs">
           {TABS.map((item) => (
             <button

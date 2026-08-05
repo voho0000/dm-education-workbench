@@ -105,6 +105,8 @@ textarea { font-family: inherit; resize: vertical; }
 .flowNeutral rect { fill: rgba(15, 42, 34, 0.05); stroke: rgba(15, 42, 34, 0.18); }
 .flowLlm rect { fill: var(--llm-soft); stroke: rgba(93, 82, 214, 0.35); }
 .flowOut rect { fill: rgba(8, 127, 118, 0.09); stroke: rgba(8, 127, 118, 0.35); }
+/* 固定內容：已審過、模型不改寫的那一類，用虛線框跟流程節點分開 */
+.flowContent rect { fill: rgba(184, 110, 25, 0.07); stroke: rgba(184, 110, 25, 0.4); stroke-dasharray: 4 3; }
 .flowTitle { font-size: 13px; font-weight: 700; fill: var(--ink); }
 .flowSub { font-size: 11px; fill: var(--muted); }
 .flowLine path { fill: none; stroke: rgba(15, 42, 34, 0.32); stroke-width: 1.4; }

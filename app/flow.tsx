@@ -14,7 +14,7 @@ type FlowNode = {
   y: number;
   title: string;
   sub: string;
-  tone: "flowNeutral" | "flowLlm" | "flowOut";
+  tone: "flowNeutral" | "flowLlm" | "flowOut" | "flowContent";
 };
 
 const W = 196;
@@ -26,14 +26,19 @@ const H = 48;
  */
 export const FLOW_NODES: FlowNode[] = [
   { id: "ingest", x: 262, y: 16, title: "健保申報 JSON", sub: "用藥 · 檢驗 · R/PR · DCSI", tone: "flowNeutral" },
+  // 固定內容是真正的輸入，不是裝飾：門檻表決定目標與追蹤間隔，模組決定病人讀到的字。
+  // 先前圖上沒畫，等於把決定輸出內容的一半來源藏起來。
+  { id: "rules", x: 16, y: 112, title: "指引門檻表", sub: "35 條 · 附章表頁次", tone: "flowContent" },
   { id: "decide", x: 262, y: 112, title: "確定性事實與判定", sub: "主題 · 目標 · 門檻（程式）", tone: "flowNeutral" },
   { id: "selector", x: 16, y: 208, title: "① 模組挑選", sub: "只回代碼與優先序", tone: "flowLlm" },
   { id: "labReview", x: 262, y: 208, title: "② 檢驗判讀", sub: "讀原始紀錄", tone: "flowLlm" },
   { id: "narrative", x: 508, y: 208, title: "③ 檢驗敘述", sub: "寫成病人看的段落", tone: "flowLlm" },
   { id: "assemble", x: 262, y: 304, title: "驗證與組裝", sub: "數值比對 · 禁止事項", tone: "flowNeutral" },
+  { id: "modules", x: 508, y: 304, title: "固定衛教模組", sub: "已審內容 · 模型不改寫", tone: "flowContent" },
   { id: "patientReport", x: 140, y: 400, title: "病人版衛教報告", sub: "正文來自固定模組", tone: "flowOut" },
   { id: "clinicianReport", x: 384, y: 400, title: "醫師版報告", sub: "附指引章表與頁次", tone: "flowOut" },
 ];
+
 
 const FLOW_EDGES = [
   // 來源 → 判定
@@ -46,6 +51,9 @@ const FLOW_EDGES = [
   "M114 256 L114 280 L360 280 L360 304",
   "M360 256 L360 304",
   "M606 256 L606 280 L360 280 L360 304",
+  // 固定內容進場
+  "M212 136 L262 136",
+  "M508 328 L458 328",
   // 組裝 → 兩份成品
   "M360 352 L360 376 L238 376 L238 400",
   "M360 352 L360 376 L482 376 L482 400",
@@ -56,12 +64,14 @@ const FLOW_EDGES = [
  * 驗證與組裝那站同時產出兩份報告，所以點亮三個。
  */
 export const STATION_TO_NODES: Record<string, string[]> = {
+  /** 內容庫不是管線上的一站，但它就是圖上那兩個虛線框。 */
+  contentLibrary: ["rules", "modules"],
   ingest: ["ingest"],
-  decide: ["decide"],
+  decide: ["decide", "rules"],
   selector: ["selector"],
   labReview: ["labReview"],
   narrative: ["narrative"],
-  assemble: ["assemble", "patientReport", "clinicianReport"],
+  assemble: ["assemble", "modules", "patientReport", "clinicianReport"],
 };
 
 export function FlowDiagram({
