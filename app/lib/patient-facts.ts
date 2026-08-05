@@ -267,6 +267,25 @@ function extractMedications(medications: unknown[], reportDate: string | null) {
   return { classes, dateRange };
 }
 
+/**
+ * 不是病人測量值的列。
+ *
+ * 實測五位病人共 79 筆：檢體品質旗標（溶血 28、脂血 28、Sample Hemolysis 5，
+ * 值多半是 0／無單位）與微生物培養的自由文字註解（COMMENT 18 筆，內容是
+ * 「因分離出 VRE 抗藥性菌株,請執行接觸隔離」這類敘述）。
+ *
+ * 為什麼是濾掉而不是提示：溶血確實會假性升高血鉀，但這批資料**沒有任何欄位
+ * 把品質旗標連到特定的結果列**，也無法確認那次抽血到底有沒有驗鉀。既然無從
+ * 辨別，提示只會變成每份報告都掛一句沒人能處理的警語。留著它們還有一個壞處：
+ * 它們會被送進 LLM 的輸入，模型有機會把「溶血」當成一個發現寫進報告。
+ */
+function isNotAMeasurement(itemName: string): boolean {
+  if (/^(溶血|脂血|黃疸)$/.test(itemName)) return true;
+  if (/sample\s+(hemoly|haemoly)|icterus|lipemi/i.test(itemName)) return true;
+  if (/^comment$/i.test(itemName) || /^[:：]/.test(itemName)) return true;
+  return false;
+}
+
 function extractLabs(labs: unknown[]) {
   const byItem = new Map<
     string,
@@ -281,6 +300,7 @@ function extractLabs(labs: unknown[]) {
     const itemName = String(record.assay_item_name ?? "").trim() || String(record.order_name ?? "").trim() || "未提供項目名稱";
     const value = String(record.assay_value ?? "").trim();
     if (!value) continue;
+    if (isNotAMeasurement(itemName)) continue;
 
     // 分組鍵必須含單位與醫令代碼。只用名稱的話，尿液鏡檢的 WBC（/HPF，參考 0–3）
     // 會和血液的 WBC（10^3/μL，參考 4–10）併成同一項，單位與參考範圍全混在一起，

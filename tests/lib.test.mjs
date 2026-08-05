@@ -2915,3 +2915,79 @@ test("名稱與醫令碼衝突時以名稱為準：09005C 但寫「飯後血糖�
   assert.equal(one("Sugar", "09005C"), "glucose-unspecified");
   assert.equal(one("血糖", "09140C"), "glucose-unspecified");
 });
+
+test("檢體品質旗標與培養註解不算病人的檢驗值", () => {
+  // 實測五位病人共 79 筆：溶血／脂血／Sample Hemolysis 與微生物培養的 COMMENT。
+  // 溶血會假性升高血鉀，但資料沒有欄位把旗標連到特定結果列，也無法確認那次
+  // 有沒有驗鉀——無從辨別的事就不該變成每份報告都掛的警語，直接濾掉。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "09021C", assay_item_name: "溶血", assay_value: "0", unit_data: "無單位" },
+          { fee_ym: "202512", order_code: "09021C", assay_item_name: "脂血", assay_value: "0", unit_data: "無單位" },
+          { fee_ym: "202512", order_code: "09071C", assay_item_name: "Sample Hemolysis", assay_value: "2+", unit_data: "無" },
+          { fee_ym: "202512", order_code: "13007C", assay_item_name: "COMMENT", assay_value: "因分離出VRE抗藥性菌株", unit_data: "無" },
+          { fee_ym: "202512", order_code: "09011C", assay_item_name: "K", assay_value: "3.4", unit_data: "mmol/L" },
+        ],
+      },
+    },
+  });
+  const names = facts.labItems.map((item) => item.itemName);
+  assert.deepEqual(names, ["K"], `不該留下非測量值的列：${names.join("、")}`);
+  assert.equal(facts.labRecordCount, 5, "原始筆數照實回報，濾掉的是進入判定的項目");
+
+  // 名稱裡剛好含這些字的真檢驗不得誤刪
+  const kept = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", assay_item_name: "溶血性貧血篩檢", assay_value: "1.2", unit_data: "mg/dL" },
+        ],
+      },
+    },
+  });
+  assert.deepEqual(kept.labItems.map((item) => item.itemName), ["溶血性貧血篩檢"]);
+});
+
+test("送進 LLM 的檢驗紀錄濾掉與糖尿病無關的類別，但核心指標一個都不能少", () => {
+  const raw = {
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: {
+      labData: {
+        rObject: [
+          // 整碼刪：微生物與輸血
+          { fee_ym: "202512", order_code: "13007C", order_name: "細菌培養", assay_item_name: "Organism 1", assay_value: "E. coli" },
+          { fee_ym: "202512", order_code: "11002C", order_name: "交叉配合", assay_item_name: "Crossmatching test", assay_value: "陰性" },
+          // 依名稱刪：血液氣體、白血球分類、發炎、凝血
+          { fee_ym: "202512", order_code: "09041B", order_name: "血液氣體分析", assay_item_name: "PCO2", assay_value: "40", unit_data: "mmHg" },
+          { fee_ym: "202512", order_code: "08013C", order_name: "白血球分類", assay_item_name: "Lymphocyte", assay_value: "30", unit_data: "%" },
+          { fee_ym: "202512", order_code: "09000C", order_name: "發炎", assay_item_name: "CRP", assay_value: "8", unit_data: "mg/L" },
+          // 同一個血液氣體套組裡的核心指標——整碼刪會連這些一起丟，所以必須留
+          { fee_ym: "202512", order_code: "09041B", order_name: "血液氣體分析", assay_item_name: "K", assay_value: "5.6", unit_data: "mmol/L" },
+          { fee_ym: "202512", order_code: "09041B", order_name: "血液氣體分析", assay_item_name: "Glucose", assay_value: "310", unit_data: "mg/dL" },
+          { fee_ym: "202512", order_code: "09015C", order_name: "肌酸酐、血", assay_item_name: "Creatinine", assay_value: "2.1", unit_data: "mg/dL" },
+        ],
+      },
+    },
+  };
+  const text = formatPatientJson(raw);
+
+  for (const gone of ["Organism 1", "Crossmatching test", "PCO2", "Lymphocyte", "CRP"]) {
+    assert.ok(!text.includes(gone), `${gone} 不該送進 LLM`);
+  }
+  for (const kept of ["K=5.6", "Glucose=310", "Creatinine=2.1"]) {
+    assert.ok(text.includes(kept), `${kept} 是核心指標，必須留下`);
+  }
+  // 濾掉多少要講出來，不能靜默少一半資料
+  assert.match(text, /5筆與糖尿病長期照護無關/);
+
+  // 程式的門檻判定走另一條路，不受這裡影響
+  const facts = extractPatientFacts(raw);
+  const findings = extractLabFindings(facts);
+  assert.ok(findings.some((item) => item.analyte === "potassium"));
+  assert.ok(findings.some((item) => item.analyte === "creatinine"));
+  assert.equal(facts.labRecordCount, 8, "程式端仍看得到全部原始筆數");
+});

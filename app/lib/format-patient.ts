@@ -243,11 +243,51 @@ export function formatPatientJson(value: unknown): string {
     }
   }
 
+/**
+ * 送進 LLM 的檢驗紀錄要不要留這一筆。
+ *
+ * 這條流程只為糖尿病長期照護服務，而申報檢驗百百種。實測五位病人 9,001 筆
+ * 檢驗共 2.1M 字元，其中三成是我們**在 prompt 裡已經明講要模型忽略**、卻照樣
+ * 送進去的東西——送了再叫它不要看，付兩次錢。
+ *
+ * 兩種刪法，差別很重要：
+ *
+ * 1. **整碼刪**：微生物培養（13007C）、藥敏（13023C）、細菌鏡檢（13006C）、
+ *    輸血交叉配合（11002C）。已逐筆確認這四碼底下**沒有任何核心指標**，
+ *    且都是某次急性事件當下的狀態，沒有採檢日就無從判讀。
+ *
+ * 2. **依項目名稱刪**：血液氣體、白血球分類、發炎指標、凝血。**不能整碼刪**——
+ *    血液氣體分析（09041B）底下藏著 K×49、Na×49、Hb×29、Glucose×29，
+ *    整碼砍掉會連這些核心指標一起丟。
+ *
+ * 只影響送給模型的文字。程式的門檻判定走 extractPatientFacts 另一條路，
+ * 讀的是原始 JSON，完全不受這裡影響——有測試釘住兩者的產出不變。
+ */
+const LLM_SKIP_ORDER_CODES = /^(13007C|13023C|13006C|11002C)$/;
+const LLM_SKIP_ITEM_PATTERNS: ReadonlyArray<RegExp> = [
+  /^(p?H|pH值)$/i,
+  /^(PO2|pO2|PCO2|pCO2|HCO3|TCO2|O2SAT|BE|BEecf|BEb|SBC|ctO2|FIO2|A-?aDO2)/i,
+  /(lymphocyte|monocyte|basophil|eosinophil|neutrophil|^ANC$|^Meta$|^Blast$|^Band|myelocyte|atypical|^Promye)/i,
+  /(^hs)?CRP|procalcitonin|^ESR$|紅血球沉降/i,
+  /^(PT|aPTT|APTT|INR)$|凝血|fibrinogen|D-?dimer/i,
+];
+
+function skipForLlm(record: JsonRecord): boolean {
+  if (LLM_SKIP_ORDER_CODES.test(String(record.order_code ?? "").trim())) return true;
+  const name = String(record.assay_item_name ?? "").trim();
+  return LLM_SKIP_ITEM_PATTERNS.some((pattern) => pattern.test(name));
+}
+
   const labs = sourceRecords(rawSources, "labData");
   const labUnique = countExact(labs);
   const labGroups = new Map<string, Array<{ text: string; count: number }>>();
+  let skippedForLlm = 0;
   for (const item of labUnique) {
     const record = isRecord(item.record) ? item.record : {};
+    if (skipForLlm(record)) {
+      skippedForLlm += item.count;
+      continue;
+    }
     const key = [
       clean(record.fee_ym),
       clean(record.order_code),
@@ -279,7 +319,13 @@ export function formatPatientJson(value: unknown): string {
   }
 
   lines.push("", "【檢驗與檢查紀錄】");
-  lines.push(`來源共${labs.length}筆；完全相同紀錄合併後${labUnique.length}筆。若來源只有費用年月而沒有採檢日時，不得推定同月份內的先後順序。`);
+  lines.push(
+    `來源共${labs.length}筆；完全相同紀錄合併後${labUnique.length}筆。` +
+      (skippedForLlm
+        ? `其中${skippedForLlm}筆與糖尿病長期照護無關（微生物培養、藥敏、輸血配合、血液氣體、白血球分類、發炎與凝血指標），未列於下方。`
+        : "") +
+      "若來源只有費用年月而沒有採檢日時，不得推定同月份內的先後順序。",
+  );
   if (!labs.length) lines.push("未提供檢驗與檢查紀錄。");
   for (const key of [...labGroups.keys()].sort().reverse()) {
     lines.push(key);
