@@ -119,7 +119,18 @@ node scripts/score-arms.mjs --run <暫存目錄> --patients <目錄>
 npm run build && npm run export:pages
 ```
 
-產物在 `github-pages/dm-education-report/`。這個站台由 `voho0000/voho0000.github.io` 儲存庫的 `dm-education-report/` 目錄提供，複製產物時要保留既有的 `og.jpg`（匯出腳本不會產生它）。
+產物在 `github-pages/dm-education-workbench/`，`og.jpg` 由匯出腳本從 `public/` 帶進去（先前它只存在於 Pages 分支，`rsync --delete` 會把它清掉而社群預覽變 404）。
+
+站台網址：<https://voho0000.github.io/dm-education-workbench/>，由本儲存庫的 `gh-pages` 分支根目錄提供。把產物整包放到該分支根目錄再推即可：
+
+```bash
+npm run build && npm run export:pages
+# 將 github-pages/dm-education-workbench/ 的內容放到 gh-pages 分支根目錄（含 .nojekyll）
+```
+
+網址由 `PAGES_URL` 環境變數覆寫，只影響 `og:image` 的絕對網址；其餘資產都是 `./` 相對路徑，換路徑不會壞。
+
+舊網址 `voho0000.github.io/dm-education-report/` 留了轉址頁，在 `voho0000/voho0000.github.io` 儲存庫裡。
 
 **私人 Sites 版**
 
