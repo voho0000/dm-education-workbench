@@ -116,6 +116,15 @@ export type TopicDecision = {
   rValue: number | null;
   prValue: number | null;
   reason: string;
+  /**
+   * 只由檢驗數值救回來的主題。
+   *
+   * KDIGO 對慢性腎臟病的定義要求異常「持續三個月以上」，而申報資料只有費用
+   * 年月、沒有採檢日期——單一筆 eGFR 58 可能是急性腎損傷、脫水、或那天的
+   * 檢驗誤差。衛教內容照給（腎功能異常本來就該講），但醫師版不能寫成
+   * 「已發生」，否則等於用一筆無日期的數字下了一個需要時序才能下的診斷。
+   */
+  provisional?: boolean;
 };
 
 /**
@@ -175,10 +184,14 @@ export function decideTopics(facts: PatientFacts): TopicDecision[] {
         : ckdIcdCodes.length > 0
           ? `申報診斷碼出現慢性腎臟病（${ckdIcdCodes.join("、")}）`
           : kidneyLabs.reason;
+      const labOnly = !hasCkdFlag && ckdIcdCodes.length === 0;
       decisions.push({
         ...base,
         kind: "established",
-        reason: `${basis}，即使 R3${rPresent ? `=${rValue}` : " 缺值"} 也以已發生處理。`,
+        provisional: labOnly,
+        reason: labOnly
+          ? `${basis}。資料只有費用年月、沒有採檢日期，無法確認是否持續三個月以上（KDIGO 對慢性腎臟病的定義要求持續三個月以上），因此列為需確認而非確診；衛教內容照納入。`
+          : `${basis}，即使 R3${rPresent ? `=${rValue}` : " 缺值"} 也以已發生處理。`,
       });
       continue;
     }
@@ -922,7 +935,8 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
        * 等於對另外兩條說謊——醫師照著去查 CKD 欄位會發現它是 0。
        */
       const decision = plan.decisions.find((entry) => String(entry.topic) === key);
-      state = `已發生（${decision?.reason ?? "本項未輸出嚴重度"}）`;
+      const prefix = decision?.provisional ? "需確認" : "已發生";
+      state = `${prefix}（${decision?.reason ?? "本項未輸出嚴重度"}）`;
     } else if (pr?.present && pr.value !== null) {
       state = `未發生｜風險預測：${PR_ACTION_TIER[pr.value] ?? "未定義分級"}`;
     } else {
@@ -1066,7 +1080,7 @@ export function decisionsForPrompt(plan: ResolvedPlan): string {
   for (const item of plan.decisions) {
     const label =
       item.kind === "established"
-        ? "已納入・已發生"
+        ? (item.provisional ? "已納入・需確認" : "已納入・已發生")
         : item.kind === "prevention-active"
           ? "已納入・積極照護"
             : item.kind === "prevention-moderate"

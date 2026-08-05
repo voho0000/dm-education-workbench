@@ -3077,3 +3077,32 @@ test("metformin 的腎功能提示只在真的用 metformin 時觸發", () => {
   assert.equal(hits("DAPAGLIFLOZIN"), false);
   assert.equal(hits("METFORMIN HCL"), true);
 });
+
+test("只由檢驗值救回的腎臟主題列為需確認，不是已發生", () => {
+  // KDIGO 要求異常持續三個月以上；申報資料只有費用年月，證明不了持續性。
+  // 衛教內容照納入，但醫師版不能用一筆無日期的 eGFR 下確診。
+  const of = (raw) => {
+    const facts = extractPatientFacts(raw);
+    const plan = resolvePlan(null, facts);
+    const decision = plan.decisions.find((item) => item.topic === 3);
+    const report = assembleClinicianReport(plan, facts, { reportDate: "2026-08-06", dataCutoff: null });
+    return { decision, line: report.split("\n").find((line) => line.includes("腎臟病變")) ?? "" };
+  };
+
+  const lab = of({
+    userInput: { REPORT_DATE: "2026-08-06" },
+    rawSources: { labData: { rObject: [{ order_code: "12015C", assay_item_name: "eGFR", assay_value: "42", fee_ym: "11406" }] } },
+  });
+  assert.equal(lab.decision.kind, "established", "衛教內容仍要納入");
+  assert.equal(lab.decision.provisional, true);
+  assert.match(lab.line, /需確認/);
+  assert.doesNotMatch(lab.line, /已發生/);
+
+  // 有申報診斷碼就是既有診斷宣告，不需要我們自己從數值推持續性。
+  const icd = of({
+    userInput: { REPORT_DATE: "2026-08-06" },
+    rawSources: { medication: { rObject: [{ icd_code: "N183", drug_date: "2024-01-01" }] } },
+  });
+  assert.equal(icd.decision.provisional, false);
+  assert.match(icd.line, /已發生（申報診斷碼/);
+});
