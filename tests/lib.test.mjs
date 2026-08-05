@@ -2714,11 +2714,11 @@ test("目標的病人版用語不得改動數字", () => {
 test("替換句的原句必須真的存在於模組正文中", () => {
   // definiteVariants 用字串比對做替換。正文改了而 from 沒跟著改，替換就靜默失效——
   // 病人會讀到「若同時有腎臟或心臟問題」，而程式明明已經知道他有。
-  for (const module of SELF_CARE_MODULES) {
-    for (const variant of module.definiteVariants ?? []) {
+  for (const item of SELF_CARE_MODULES) {
+    for (const variant of item.definiteVariants ?? []) {
       assert.ok(
-        module.patientText.includes(variant.from),
-        `${module.id} 的替換原句已不在正文中，替換會靜默失效：${variant.from}`,
+        item.patientText.includes(variant.from),
+        `${item.id} 的替換原句已不在正文中，替換會靜默失效：${variant.from}`,
       );
     }
   }

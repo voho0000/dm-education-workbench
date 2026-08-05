@@ -13,8 +13,6 @@
     "lint": "eslint . --ignore-pattern dist --ignore-pattern .next --ignore-pattern github-pages",
     "db:generate": "drizzle-kit generate",
     "export:pages": "node scripts/export-github-pages.mjs",
-    "compare:arms": "node scripts/compare-arms.mjs",
-    "score:arms": "node scripts/score-arms.mjs",
     "run:pipeline": "node scripts/run-pipeline.mjs"
   },
   "dependencies": {
