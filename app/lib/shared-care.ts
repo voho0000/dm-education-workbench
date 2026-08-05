@@ -56,6 +56,16 @@ const TOPIC_INTERVAL_RULES: Record<number, string[]> = {
   6: ["interval-foot"],
 };
 
+/** 第 1 型病人要換用的追蹤規則。左邊是第 2 型的 id，右邊是第 1 型的對應條目。 */
+const TYPE1_INTERVAL_SWAP: Record<string, string> = {
+  "interval-hba1c": "t1-interval-hba1c",
+  "interval-kidney": "t1-interval-kidney",
+  "interval-eye": "t1-interval-eye",
+  "interval-neuropathy": "t1-interval-neuropathy",
+  "interval-lipid": "t1-interval-lipid-adult",
+  "kidney-intensive-followup": "t1-kidney-twice-yearly",
+};
+
 /** 每份報告都適用的追蹤項目。 */
 const BASE_INTERVAL_RULES = ["interval-hba1c", "interval-lipid", "interval-kidney", "interval-oral"];
 
@@ -65,7 +75,7 @@ const BASE_INTERVAL_RULES = ["interval-hba1c", "interval-lipid", "interval-kidne
  */
 export function followUpSchedule(
   topics: number[],
-  options: { kidneyIntensive?: boolean } = {},
+  options: { kidneyIntensive?: boolean; type1?: boolean } = {},
 ): { rules: GuidelineRule[]; text: string } {
   const wanted = new Set<string>(BASE_INTERVAL_RULES);
   for (const topic of topics) {
@@ -79,22 +89,48 @@ export function followUpSchedule(
   // 眼底追蹤頻率是眼底檢查的細化，兩條並列會重複。
   if (wanted.has("interval-retina-followup")) wanted.delete("interval-eye");
 
-  const rules = GUIDELINE_RULES.filter((rule) => wanted.has(rule.id) && rule.patientFacing);
+  /*
+   * 第 1 型的追蹤間隔與起始時機都不一樣：糖化血色素看的是「一年幾次」而不是
+   * 「每幾個月」，腎臟、眼底、神經則是發病滿幾年才開始。這裡整批換成第 1 型的
+   * 條目——不換的話它們會因為 typeGate 被濾掉而整段消失。
+   *
+   * 換表必須在上面幾條去重之後做：去重比對的是第 2 型的 id，先換就對不上，
+   * 眼底會同時出現「初次檢查時機」與「後續追蹤頻率」兩條。
+   */
+  if (options.type1) {
+    for (const [t2, t1] of Object.entries(TYPE1_INTERVAL_SWAP)) {
+      if (wanted.delete(t2)) wanted.add(t1);
+    }
+  }
+
+  // 依 SUBJECT 的宣告順序輸出，不用規則表的陣列順序——第 1 型的條目寫在表尾，
+  // 照陣列順序會讓「口腔」排在「血糖控制指標」前面。
+  const order = Object.keys(SUBJECT);
+  const rules = GUIDELINE_RULES.filter((rule) => wanted.has(rule.id) && rule.patientFacing).sort(
+    (a, b) => order.indexOf(a.id) - order.indexOf(b.id),
+  );
   if (!rules.length) return { rules: [], text: "" };
 
   return { rules, text: buildText(rules) };
 }
 
+/** 鍵的順序就是報告裡的列出順序。同一個主題的兩型條目相鄰擺，換表不會改變位置。 */
 const SUBJECT: Record<string, string> = {
-    "interval-hba1c": "血糖控制指標",
-    "interval-lipid": "血脂",
-    "interval-kidney": "腎功能與尿液檢查",
-    "interval-oral": "口腔",
-    "interval-eye": "眼底",
-    "interval-retina-followup": "眼底檢查",
-    "interval-neuropathy": "神經與足部感覺",
-    "interval-foot": "足部循環",
+  "interval-hba1c": "血糖控制指標",
+  "t1-interval-hba1c": "血糖控制指標",
+  "interval-lipid": "血脂",
+  "t1-interval-lipid-adult": "血脂",
+  "interval-kidney": "腎功能與尿液檢查",
+  "t1-interval-kidney": "腎功能與尿液檢查",
   "kidney-intensive-followup": "腎功能與尿液檢查（您的檢查結果顯示需要加強追蹤）",
+  "t1-kidney-twice-yearly": "腎功能與尿液檢查（您的檢查結果顯示需要加強追蹤）",
+  "interval-eye": "眼底",
+  "t1-interval-eye": "眼底",
+  "interval-retina-followup": "眼底檢查",
+  "interval-neuropathy": "神經與足部感覺",
+  "t1-interval-neuropathy": "神經與足部感覺",
+  "interval-foot": "足部循環",
+  "interval-oral": "口腔",
 };
 
 /** 病人版：白話說法，不夾帶檢查技術名稱。 */

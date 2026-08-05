@@ -546,6 +546,7 @@ export function resolvePlan(audit: DataAudit | null, facts: PatientFacts): Resol
     ).length - labFindings.length,
     followUp: followUpSchedule(includedTopics, {
       kidneyIntensive: labThresholds.some((hit) => hit.code === "kidney-intensive-followup"),
+          type1: facts.diabetesType.verdict === "type1-confirmed",
     }),
     urgentSigns,
   };

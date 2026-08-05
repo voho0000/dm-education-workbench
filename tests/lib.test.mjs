@@ -27,7 +27,8 @@ import {
   selectSelfCareModules,
 } from "../app/lib/self-care-modules.ts";
 import { resolveTargets } from "../app/lib/resolve-targets.ts";
-import { GUIDELINE_RULES, RULES_APPROVED, RULES_BY_ID, RULES_VERSION } from "../app/lib/guideline-rules.ts";
+import { GUIDELINE_RULES, GUIDELINE_SOURCES, RULES_APPROVED, RULES_BY_ID, RULES_VERSION, citationText, rulesForType } from "../app/lib/guideline-rules.ts";
+import { compareToTargets } from "../app/lib/target-comparison.ts";
 import {
   BEHAVIOR_LABEL,
   CATEGORY_LABEL,
@@ -3105,4 +3106,87 @@ test("只由檢驗值救回的腎臟主題列為需確認，不是已發生", ()
   });
   assert.equal(icd.decision.provisional, false);
   assert.match(icd.line, /已發生（申報診斷碼/);
+});
+
+// ── 分型：第 1 型與第 2 型的門檻不一樣 ────────────────────────────
+
+const typedFacts = (icd, lab = []) =>
+  extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-06", BIRTHDAY: "1990-01-01" },
+    rawSources: {
+      medication: { rObject: [{ icd_code: icd, drug_date: "2024-01-01" }] },
+      labData: { rObject: lab },
+    },
+  });
+
+test("餐後血糖的超標門檻依糖尿病型別而不同", () => {
+  // 第 2 型指引 80–160 mg/dL，第 1 型成人低於 180。一位餐後 170 的第 1 型病人
+  // 若套第 2 型的門檻會被判成超標，而且引用的還是第 2 型指引。
+  const pc = [{ order_code: "09004C", assay_item_name: "飯後血糖", assay_value: "170", unit_data: "mg/dL", fee_ym: "11406" }];
+  const at = (icd) => {
+    const facts = typedFacts(icd, pc);
+    return compareToTargets(extractLabFindings(facts), facts).find((item) => item.analyte === "postprandial-glucose");
+  };
+
+  const t1 = at("E101");
+  assert.equal(t1.outOfTarget, false);
+  assert.match(t1.citation, /第1型糖尿病臨床照護指引/);
+
+  const t2 = at("E119");
+  assert.equal(t2.outOfTarget, true);
+  assert.match(t2.citation, /第2型糖尿病臨床照護指引/);
+});
+
+test("第 1 型病人的目標與出處都來自第 1 型指引", () => {
+  const targets = resolveTargets(typedFacts("E101"), 0);
+  const ppg = targets.targets.find((item) => item.metric === "餐後血糖");
+  assert.match(ppg.value, /低於 180 mg\/dL/);
+  assert.match(ppg.citation, /第1型/);
+  // 起始時機取決於發病年份，申報資料判不出來——不能靜默套用
+  assert.ok(targets.undetermined.some((line) => line.includes("發病年份")));
+});
+
+test("型別判不出來時明說套了哪一套指引", () => {
+  // 靜默套第 2 型是目前的行為，但報告必須寫出這個假設，否則第 1 型病人
+  // 會拿到第 2 型的數字而沒有任何線索。
+  const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-06" }, rawSources: {} });
+  const targets = resolveTargets(facts, 0);
+  assert.ok(targets.undetermined.some((line) => line.includes("一律套用第 2 型指引的數值")));
+});
+
+test("追蹤間隔換成第 1 型後不得重複或漏段", () => {
+  const textOf = (icd) => {
+    const facts = extractPatientFacts({
+      userInput: { REPORT_DATE: "2026-08-06", R1: 1, R3: 1, R4: 1 },
+      rawSources: { medication: { rObject: [{ icd_code: icd, drug_date: "2024-01-01" }] } },
+    });
+    return resolvePlan(null, facts).followUp;
+  };
+
+  for (const icd of ["E101", "E119"]) {
+    const followUp = textOf(icd);
+    const subjects = followUp.rules.map((rule) => rule.id);
+    assert.equal(new Set(subjects).size, subjects.length, `${icd} 出現重複條目：${subjects}`);
+    // 眼底的「初次檢查時機」與「後續追蹤頻率」不得並列
+    const eyes = followUp.text.split("\n").filter((line) => line.includes("眼底"));
+    assert.equal(eyes.length, 1, `${icd} 的眼底條目重複：${eyes.join(" ／ ")}`);
+    assert.ok(followUp.rules.length >= 5, `${icd} 追蹤項目過少，可能被 typeGate 濾掉了`);
+  }
+
+  assert.match(textOf("E101").text, /一年至少檢查 2 次/);
+  assert.match(textOf("E119").text, /每 3 個月監測一次/);
+});
+
+test("兩份指引的出處都要能認出是哪一本", () => {
+  for (const rule of GUIDELINE_RULES) {
+    const expected = GUIDELINE_SOURCES[rule.citation.source ?? "t2-2022"];
+    assert.ok(citationText(rule).startsWith(expected), `${rule.id} 的出處指向錯誤的指引`);
+  }
+  // 第 1 型專用的規則不得出現在第 2 型病人的規則集裡，反之亦然
+  const forT1 = new Set(rulesForType("type1-confirmed").map((rule) => rule.id));
+  const forT2 = new Set(rulesForType("type2-confirmed").map((rule) => rule.id));
+  assert.ok(forT1.has("t1-ppg-adult") && !forT2.has("t1-ppg-adult"));
+  assert.ok(forT2.has("ppg-general") && !forT1.has("ppg-general"));
+  // 型別未知走第 2 型那一套
+  assert.deepEqual([...forT2].sort(), rulesForType("absent").map((rule) => rule.id).sort());
 });

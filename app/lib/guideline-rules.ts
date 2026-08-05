@@ -1,7 +1,9 @@
 /**
- * 指引門檻值規則表（取代把 652,078 字元的指引全文塞進 context）。
+ * 指引門檻值規則表（取代把指引全文塞進 context）。
  *
- * 來源：中華民國糖尿病學會《2022第2型糖尿病臨床照護指引》。
+ * 來源有兩份，各自標記在 citation.source：
+ *   t2-2022　中華民國糖尿病學會《2022第2型糖尿病臨床照護指引》（全文 418 頁）
+ *   t1-2022　中華民國糖尿病學會《2022第1型糖尿病臨床照護指引》（全文 363 頁）
  *
  * 這裡記錄的是**事實**（門檻數值、追蹤間隔、轉診急迫度），以自己的文字陳述，
  * 並附上可回查的出處；不重製指引原文。原文標示未授權不得轉載與散布，
@@ -14,9 +16,20 @@
  * 但可直接跳頁核對。
  */
 
-export const RULES_VERSION = "2022-guideline-extract-0.3";
+export const RULES_VERSION = "2022-guideline-extract-0.4";
 export const RULES_APPROVED = false;
-export const RULES_SOURCE = "中華民國糖尿病學會《2022第2型糖尿病臨床照護指引》";
+
+export type GuidelineSourceId = "t2-2022" | "t1-2022";
+
+export const GUIDELINE_SOURCES: Record<GuidelineSourceId, string> = {
+  "t2-2022": "中華民國糖尿病學會《2022第2型糖尿病臨床照護指引》",
+  "t1-2022": "中華民國糖尿病學會《2022第1型糖尿病臨床照護指引》",
+};
+
+/** 舊名保留給只需要「主要來源」的地方（例如內容庫的說明文字）。 */
+export const RULES_SOURCE = GUIDELINE_SOURCES["t2-2022"];
+
+export type DiabetesTypeGate = "any" | "type1-confirmed" | "type2-confirmed";
 
 export type RuleCategory =
   | "glycemic-target"
@@ -35,7 +48,17 @@ export type GuidelineRule = {
   appliesTo: string;
   /** 以自己的文字陳述的門檻或間隔。 */
   statement: string;
-  citation: { table?: string; section?: string; pdfPage: number };
+  /** 未標 source 時視為 t2-2022——這張表最早整份出自第 2 型指引。 */
+  citation: { source?: GuidelineSourceId; table?: string; section?: string; pdfPage: number };
+  /**
+   * 這條規則適用的糖尿病型別。
+   *
+   * 未標時視為 any（兩型皆適用的事實，例如低血糖分級）。標成 type2-confirmed 的
+   * 規則有第 1 型的對應版本，兩者數字未必相同——餐後血糖第 2 型是 80–160 mg/dL、
+   * 第 1 型成人是低於 180 mg/dL。沒有這個欄位的話，一位第 1 型病人會拿到第 2 型
+   * 的數字，還附上寫著「第2型糖尿病臨床照護指引」的出處。
+   */
+  typeGate?: DiabetesTypeGate;
   /**
    * 這條規則是否可以直接寫進病人可見內容。
    * false 代表它只用於醫師版或程式判定（例如藥物禁忌）。
@@ -61,6 +84,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   // ── 血糖目標 ──────────────────────────────────────────────
   {
     id: "hba1c-general",
+    typeGate: "type2-confirmed",
     targetValue: "低於 7.0%，並需個別化考量。",
     category: "glycemic-target",
     appliesTo: "一般成人",
@@ -71,6 +95,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "fpg-general",
+    typeGate: "type2-confirmed",
     targetValue: "80–130 mg/dL。",
     category: "glycemic-target",
     appliesTo: "一般成人",
@@ -80,6 +105,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "ppg-general",
+    typeGate: "type2-confirmed",
     targetValue: "80–160 mg/dL。",
     category: "glycemic-target",
     appliesTo: "一般成人",
@@ -146,6 +172,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "bp-target-general",
+    typeGate: "type2-confirmed",
     targetValue: "140/90 mmHg 以下。",
     category: "bp-target",
     appliesTo: "一般糖尿病人",
@@ -156,6 +183,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "bp-target-intensive",
+    typeGate: "type2-confirmed",
     targetValue: "在病人可承受的情況下可進一步控制至 130/80 mmHg。",
     category: "bp-target",
     appliesTo: "可耐受且屬心血管或腦血管高危族群",
@@ -242,6 +270,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   // ── 監測與追蹤間隔（表九）────────────────────────────────
   {
     id: "interval-hba1c",
+    typeGate: "type2-confirmed",
     category: "screening-interval",
     appliesTo: "糖尿病人",
     statement: "糖化血色素與血糖建議每 3 個月監測一次。",
@@ -267,6 +296,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "interval-kidney",
+    typeGate: "type2-confirmed",
     category: "screening-interval",
     appliesTo: "糖尿病人",
     statement:
@@ -276,6 +306,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "interval-eye",
+    typeGate: "type2-confirmed",
     category: "screening-interval",
     appliesTo: "糖尿病人",
     statement: "視力與眼底檢查建議每年一次。",
@@ -293,6 +324,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   },
   {
     id: "interval-neuropathy",
+    typeGate: "type2-confirmed",
     category: "screening-interval",
     appliesTo: "糖尿病人",
     statement:
@@ -383,6 +415,174 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
     citation: { table: "表九 註 5", pdfPage: 19 },
     patientFacing: true,
   },
+
+  // ── 第 1 型糖尿病（《2022第1型糖尿病臨床照護指引》）─────────────
+  //
+  // 只收與第 2 型**實際不同**的條目，以及第 2 型指引沒有的兒少項目。
+  // 兩型相同的事實（例如低血糖 <70／<54 分級）不重複收，維持 typeGate 未標。
+  {
+    id: "t1-hba1c-general",
+    targetValue: "低於 7.0%。",
+    category: "glycemic-target",
+    appliesTo: "第 1 型糖尿病成人，且無嚴重低血糖",
+    statement: "糖化血色素控制目標為低於 7.0%，且無明顯低血糖。",
+    patientStatement: "糖化血色素建議控制在 7.0% 以下。實際目標會依您的病程、低血糖經驗與其他疾病調整，請以醫療團隊為您訂的數字為準。",
+    citation: { source: "t1-2022", section: "第五章 血糖治療目標", pdfPage: 68 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-hba1c-hypo-unaware",
+    targetValue: "放寬為低於 7.5%。",
+    category: "glycemic-target",
+    appliesTo: "第 1 型糖尿病，無法清楚表達低血糖症狀、低血糖無感、無法接受胰島素類似物治療或無法規則自我監測血糖",
+    statement: "糖化血色素目標放寬為低於 7.5%。",
+    citation: { source: "t1-2022", section: "第五章 血糖治療目標", pdfPage: 67 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-hba1c-severe-hypo",
+    targetValue: "放寬為低於 8.0%。",
+    category: "glycemic-target",
+    appliesTo: "第 1 型糖尿病，過去有嚴重低血糖病史、預期壽命受限，或嚴格治療的害處明顯大於好處",
+    statement: "糖化血色素目標放寬為低於 8.0%。",
+    citation: { source: "t1-2022", section: "第五章 血糖治療目標", pdfPage: 68 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-fpg-adult",
+    targetValue: "80–130 mg/dL。",
+    category: "glycemic-target",
+    appliesTo: "第 1 型糖尿病成人",
+    statement: "空腹血糖控制目標為 80–130 mg/dL。",
+    citation: { source: "t1-2022", section: "第五章 血糖治療目標", pdfPage: 70 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    /*
+     * 這一條是兩型差最多的數字：第 2 型指引寫 80–160 mg/dL，第 1 型寫低於 180。
+     * 套錯會讓一位餐後 170 的第 1 型病人被判成超標。
+     */
+    id: "t1-ppg-adult",
+    targetValue: "低於 180 mg/dL。",
+    category: "glycemic-target",
+    appliesTo: "第 1 型糖尿病成人",
+    statement: "餐後血糖控制目標為低於 180 mg/dL，測量時機為餐後 1–2 小時。",
+    citation: { source: "t1-2022", section: "第五章 血糖治療目標", pdfPage: 70 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-glucose-youth",
+    targetValue: "飯前 90–130 mg/dL、飯後 90–180 mg/dL、睡前 90–150 mg/dL。",
+    category: "glycemic-target",
+    appliesTo: "第 1 型糖尿病兒童與青少年",
+    statement: "飯前血糖 90–130 mg/dL、飯後血糖 90–180 mg/dL、睡前血糖 90–150 mg/dL 為合理目標。",
+    citation: { source: "t1-2022", section: "第五章 血糖治療目標", pdfPage: 68 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-interval-hba1c",
+    category: "screening-interval",
+    appliesTo: "第 1 型糖尿病",
+    statement: "控制穩定且達標者一年至少監測 2 次糖化血色素；近期改變治療方式或未達控制目標者一年至少 4 次。",
+    patientStatement: "糖化血色素建議一年至少檢查 2 次；如果最近換了治療方式或還沒達到目標，建議一年 4 次。",
+    citation: { source: "t1-2022", section: "第五章 血糖治療目標", pdfPage: 67 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-bp-target-general",
+    targetValue: "收縮壓低於 140 mmHg、舒張壓低於 90 mmHg。",
+    category: "bp-target",
+    appliesTo: "第 1 型糖尿病合併高血壓",
+    statement: "收縮壓控制於 140 mmHg 以下、舒張壓控制於 90 mmHg 以下。",
+    citation: { source: "t1-2022", section: "第九章 高血壓藥物控制及目標", pdfPage: 162 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-bp-target-intensive",
+    targetValue: "低於 130/80 mmHg。",
+    category: "bp-target",
+    appliesTo: "第 1 型糖尿病合併心血管疾病或蛋白尿",
+    statement: "血壓控制於 130/80 mmHg 以下；合併心血管疾病可達到次級預防，合併蛋白尿可延緩腎病變的發生和惡化。",
+    citation: { source: "t1-2022", section: "第九章 高血壓藥物控制及目標", pdfPage: 162 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-interval-lipid-adult",
+    category: "screening-interval",
+    appliesTo: "第 1 型糖尿病成人",
+    statement: "每年至少接受 1 次血脂檢查，包括總膽固醇、低密度脂蛋白膽固醇、高密度脂蛋白膽固醇與三酸甘油酯。",
+    citation: { source: "t1-2022", section: "第九章 血脂異常的控制及目標", pdfPage: 168 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-interval-kidney",
+    category: "screening-interval",
+    appliesTo: "第 1 型糖尿病，發病滿 5 年以上",
+    statement: "發病滿 5 年以上者，應於青春期或大於 10 歲時開始，每年檢驗早晨尿液白蛋白／肌酸酐比值（UACR）。",
+    patientStatement: "糖尿病滿 5 年之後，建議每年檢查一次早晨尿液的白蛋白／肌酸酐比值。",
+    citation: { source: "t1-2022", section: "第十章 糖尿病腎臟疾病", pdfPage: 198 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-kidney-twice-yearly",
+    category: "screening-interval",
+    appliesTo: "第 1 型糖尿病，UACR 大於 300 mg/g 或 eGFR 介於 30–60 mL/min/1.73m²",
+    statement: "應每年至少檢驗兩次 UACR。",
+    citation: { source: "t1-2022", section: "第十章 糖尿病腎臟疾病", pdfPage: 199 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-referral-nephrology",
+    category: "referral-urgency",
+    appliesTo: "第 1 型糖尿病，eGFR 低於 30 mL/min/1.73m²、原因不明的腎臟病，或難以控制／快速惡化的腎功能",
+    statement: "應即時轉介腎臟科醫師評估。",
+    citation: { source: "t1-2022", section: "第十章 糖尿病腎臟疾病", pdfPage: 200 },
+    patientFacing: false,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-interval-eye",
+    category: "screening-interval",
+    appliesTo: "第 1 型糖尿病",
+    statement: "第 1 型糖尿病人於 11 歲以上診斷後 2 年，或 9 歲診斷後 5 年，應接受初次完整的眼科檢查（含散瞳），之後依建議安排追蹤。",
+    // 不把兩個分支併成「2 到 5 年」——那會讓 9 歲診斷的人以為第 2 年就該做，
+    // 也讓 11 歲以上診斷的人以為可以拖到第 5 年。
+    patientStatement: "第 1 型糖尿病的第一次完整眼睛檢查（含散瞳），11 歲以上診斷的人建議在診斷後 2 年完成，9 歲診斷的人建議在診斷後 5 年完成，之後定期追蹤。",
+    citation: { source: "t1-2022", section: "第十章 視網膜病變", pdfPage: 186 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-referral-eye-vision",
+    category: "referral-urgency",
+    appliesTo: "第 1 型糖尿病，矯正視力低於 0.5（20/40）或自覺視力變化",
+    statement: "應轉介眼科醫師。",
+    citation: { source: "t1-2022", section: "第十章 視網膜病變", pdfPage: 186 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
+  {
+    id: "t1-interval-neuropathy",
+    category: "screening-interval",
+    appliesTo: "第 1 型糖尿病",
+    statement: "第 1 型糖尿病人應於罹病後 2–5 年、青春期或年齡大於 10 歲時開始，每年接受完整的神經病變篩檢。",
+    patientStatement: "第 1 型糖尿病建議在罹病 2 到 5 年後、或滿 10 歲之後開始，每年做一次完整的神經檢查。",
+    citation: { source: "t1-2022", section: "第十章 神經病變", pdfPage: 214 },
+    patientFacing: true,
+    typeGate: "type1-confirmed",
+  },
 ];
 
 export const RULES_BY_ID = new Map(GUIDELINE_RULES.map((rule) => [rule.id, rule]));
@@ -394,16 +594,31 @@ export function rulesByCategory(category: RuleCategory): GuidelineRule[] {
 /** 給 LLM 或報告使用的引用字串。 */
 export function citationText(rule: GuidelineRule): string {
   const where = rule.citation.table ?? rule.citation.section ?? "";
-  return `${RULES_SOURCE}${where ? `，${where}` : ""}（PDF 第 ${rule.citation.pdfPage} 頁）`;
+  return `${GUIDELINE_SOURCES[rule.citation.source ?? "t2-2022"]}${where ? `，${where}` : ""}（PDF 第 ${rule.citation.pdfPage} 頁）`;
 }
 
 /**
- * 行內出處。整份報告的指引來源只有一個，每一行都重印書名是雜訊；
- * 但章表與頁次必須逐條給，否則醫師無從核對。
+ * 行內出處。章表與頁次必須逐條給，否則醫師無從核對。
+ *
+ * 兩份指引的頁次會撞號（第 1 型的 p.198 與第 2 型的 p.198 是不同的東西），
+ * 所以第 1 型的規則要標出來；第 2 型是預設來源，不標以免每一行都變長。
  */
 export function citationShort(rule: GuidelineRule): string {
   const where = rule.citation.table ?? rule.citation.section ?? "";
-  return `${where ? `${where}，` : ""}p.${rule.citation.pdfPage}`;
+  const book = rule.citation.source === "t1-2022" ? "第1型指引，" : "";
+  return `${book}${where ? `${where}，` : ""}p.${rule.citation.pdfPage}`;
+}
+
+/**
+ * 依病人的糖尿病型別過濾規則。
+ *
+ * 型別判不出來（absent／conflicting）時回傳第 2 型那一套——申報資料裡絕大多數
+ * 是第 2 型，而完全不給目標會讓報告變成空的。呼叫端必須把這個假設寫進報告，
+ * 不能靜默套用（resolve-targets 會推一則 undetermined）。
+ */
+export function rulesForType(verdict: string): GuidelineRule[] {
+  const wanted = verdict === "type1-confirmed" ? "type1-confirmed" : "type2-confirmed";
+  return GUIDELINE_RULES.filter((rule) => (rule.typeGate ?? "any") === "any" || rule.typeGate === wanted);
 }
 
 export function formatRules(rules: GuidelineRule[]): string {

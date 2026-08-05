@@ -59,6 +59,12 @@ export function compareToTargets(findings: AnalyteFinding[], facts: PatientFacts
   const get = (analyte: Analyte) => findings.find((item) => item.analyte === analyte);
   const age = facts.ageYears.known ? facts.ageYears.value : null;
   const elderly = age !== null && age >= 65;
+  /*
+   * 餐後血糖的上限兩型不同：第 2 型指引 160 mg/dL，第 1 型成人低於 180。
+   * 這裡是實際判「超標」的地方，門檻沒跟著換的話，一位餐後 170 的第 1 型病人
+   * 會被判成超標，而且引用的還是第 2 型指引。
+   */
+  const isType1 = facts.diabetesType.verdict === "type1-confirmed";
 
   // ── 糖化血色素 ──
   const hba1c = get("HbA1c");
@@ -84,31 +90,32 @@ export function compareToTargets(findings: AnalyteFinding[], facts: PatientFacts
       patientMessage: outOfTarget
         ? `您的資料中曾出現偏高的糖化血色素（${worst}%）。這是反映一段期間平均血糖的指標，請與醫療團隊確認適合您的目標值與下一步。`
         : null,
-      citation: cite(elderly ? "hba1c-elderly-intermediate" : "hba1c-general"),
-      citationShort: citeShort(elderly ? "hba1c-elderly-intermediate" : "hba1c-general"),
+      citation: cite(elderly ? "hba1c-elderly-intermediate" : isType1 ? "t1-hba1c-general" : "hba1c-general"),
+      citationShort: citeShort(elderly ? "hba1c-elderly-intermediate" : isType1 ? "t1-hba1c-general" : "hba1c-general"),
       targetNeedsConfirmation: elderly,
     });
   }
 
   // ── 餐後血糖 ──
-  // 指引有 80–160 的目標，先前沒有對應的 analyte，所以這個目標從來沒被比對過。
+  // 指引有數值目標，先前沒有對應的 analyte，所以這個目標從來沒被比對過。
   const postprandial = get("postprandial-glucose");
   if (postprandial) {
     const worst = postprandial.max;
-    const outOfTarget = worst > 160;
+    const ppgCeiling = isType1 ? 180 : 160;
+    const outOfTarget = worst > ppgCeiling;
     results.push({
       analyte: "postprandial-glucose",
       label: "餐後血糖",
       worst,
-      target: "80–160 mg/dL",
+      target: isType1 ? "低於 180 mg/dL" : "80–160 mg/dL",
       outOfTarget,
       severity: worst >= 250 ? "attention" : "info",
-      clinicianMessage: `Glucose PC 曾出現 ${postprandial.min}–${postprandial.max} mg/dL${outOfTarget ? "，最高超過目標上限 160" : ""}。`,
+      clinicianMessage: `Glucose PC 曾出現 ${postprandial.min}–${postprandial.max} mg/dL${outOfTarget ? `，最高超過目標上限 ${ppgCeiling}` : ""}。`,
       patientMessage: outOfTarget
         ? `您的資料中曾出現偏高的餐後血糖（最高 ${worst} mg/dL）。這些紀錄沒有附檢查日期，請在回診時和醫療團隊一起看實際結果。`
         : null,
-      citation: cite("ppg-general"),
-      citationShort: citeShort("ppg-general"),
+      citation: cite(isType1 ? "t1-ppg-adult" : "ppg-general"),
+      citationShort: citeShort(isType1 ? "t1-ppg-adult" : "ppg-general"),
       targetNeedsConfirmation: elderly,
     });
   }
@@ -129,8 +136,8 @@ export function compareToTargets(findings: AnalyteFinding[], facts: PatientFacts
       patientMessage: outOfTarget
         ? `您的資料中曾出現偏高的飯前血糖（最高 ${worst} mg/dL）。這些紀錄沒有附檢查日期，請在回診時和醫療團隊一起看實際結果。`
         : null,
-      citation: cite("fpg-general"),
-      citationShort: citeShort("fpg-general"),
+      citation: cite(isType1 ? "t1-fpg-adult" : "fpg-general"),
+      citationShort: citeShort(isType1 ? "t1-fpg-adult" : "fpg-general"),
       targetNeedsConfirmation: elderly,
     });
   }

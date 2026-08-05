@@ -25,8 +25,8 @@ import {
 import { EDUCATION_MODULES, MODULE_CATALOG_APPROVED, MODULE_CATALOG_VERSION } from "./lib/education-modules";
 import {
   GUIDELINE_RULES,
+  GUIDELINE_SOURCES,
   RULES_APPROVED,
-  RULES_SOURCE,
   RULES_VERSION,
   citationShort,
   type GuidelineRule,
@@ -177,8 +177,12 @@ function RulesTab() {
   return (
     <>
       <p className="fieldNote">
-        來源：{RULES_SOURCE}。這裡記錄的是門檻數值、追蹤間隔與轉診急迫度等事實，以自己的文字陳述並附出處，
-        不重製指引原文。頁次指 PDF 實體頁次，可直接跳頁核對。共 {GUIDELINE_RULES.length} 條。
+        來源兩份：{GUIDELINE_SOURCES["t2-2022"]}與{GUIDELINE_SOURCES["t1-2022"]}。
+        這裡記錄的是門檻數值、追蹤間隔與轉診急迫度等事實，以自己的文字陳述並附出處，不重製指引原文。
+        頁次指各自的 PDF 實體頁次，可直接跳頁核對。共 {GUIDELINE_RULES.length} 條，其中
+        {" "}{GUIDELINE_RULES.filter((rule) => rule.typeGate === "type1-confirmed").length} 條為第 1 型專用、
+        {GUIDELINE_RULES.filter((rule) => rule.typeGate === "type2-confirmed").length} 條為第 2 型專用，
+        其餘兩型皆適用。兩型的數字有實際差異——餐後血糖第 2 型是 80–160 mg/dL，第 1 型成人是低於 180 mg/dL。
       </p>
 
       {byCategory.map((group) => (
@@ -202,6 +206,11 @@ function RulesTab() {
                   <tr key={rule.id}>
                     <td>
                       <code>{rule.id}</code>
+                      {rule.typeGate && rule.typeGate !== "any" ? (
+                        <span className="libraryTag">
+                          {rule.typeGate === "type1-confirmed" ? "第 1 型專用" : "第 2 型專用"}
+                        </span>
+                      ) : null}
                       <span>{rule.appliesTo}</span>
                     </td>
                     <td>{rule.statement}</td>

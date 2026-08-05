@@ -22,7 +22,7 @@ import { extractLabFindings, missingCoreAnalytes } from "./lab-findings.ts";
 import { labSectionOf } from "./lab-llm.ts";
 import type { PatientFacts } from "./patient-facts.ts";
 
-export const LAB_NARRATIVE_PROMPT = `你要為一位第 2 型糖尿病人寫「檢驗數值」這一段衛教內容，讀者是病人本人，不是醫療人員。
+export const LAB_NARRATIVE_PROMPT = `你要為一位糖尿病人寫「檢驗數值」這一段衛教內容，讀者是病人本人，不是醫療人員。
 
 輸入分三部分：這位病人的基本資料（含性別 gender 與生日 birthday）、健保申報檢驗紀錄原文、以及一份程式初步判定「可能完全沒有紀錄」的核心指標清單。輸入不含用藥資料，不要推測或提及任何藥物。
 

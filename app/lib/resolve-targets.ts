@@ -77,13 +77,27 @@ export function resolveTargets(
   const age = facts.ageYears.known ? facts.ageYears.value : null;
   const elderly = age !== null && age >= 65;
 
+  /*
+   * 兩型的門檻不一樣（餐後血糖第 2 型 80–160、第 1 型成人低於 180），
+   * 而規則表的預設來源是第 2 型指引，出處字串就寫著「第2型」。
+   * 型別判不出來時仍走第 2 型那套——申報資料裡絕大多數是第 2 型，
+   * 而不給任何目標會讓報告空掉——但這個假設必須寫進報告，不能靜默套用。
+   */
+  const isType1 = facts.diabetesType.verdict === "type1-confirmed";
+  const t = (t1: string, t2: string) => (isType1 ? t1 : t2);
+
   // ── 血糖 ──
   if (!elderly) {
     targets.push(
-      target("糖化血色素", "hba1c-general", age === null ? "年齡未知，先套用一般成人通則" : `年齡 ${age} 歲，未達 65 歲高齡放寬條件`, age === null),
+      target(
+        "糖化血色素",
+        t("t1-hba1c-general", "hba1c-general"),
+        age === null ? "年齡未知，先套用一般成人通則" : `年齡 ${age} 歲，未達 65 歲高齡放寬條件`,
+        age === null,
+      ),
     );
-    targets.push(target("空腹血糖", "fpg-general", "一般成人通則"));
-    targets.push(target("餐後血糖", "ppg-general", "一般成人通則"));
+    targets.push(target("空腹血糖", t("t1-fpg-adult", "fpg-general"), "一般成人通則"));
+    targets.push(target("餐後血糖", t("t1-ppg-adult", "ppg-general"), "一般成人通則"));
   } else {
     // 指引的三級放寬需要健康狀態分級；申報資料無法判定認知功能與預期餘命。
     const burden = `DCSI ${facts.dcsiTotal.known ? facts.dcsiTotal.value : "未知"}，已發生併發症 ${establishedTotal} 項`;
@@ -114,7 +128,7 @@ export function resolveTargets(
     targets.push(
       target(
         "血壓",
-        "bp-target-intensive",
+        t("t1-bp-target-intensive", "bp-target-intensive"),
         `資料顯示已有${hasCardiovascular ? "心血管" : ""}${hasCardiovascular && hasCerebrovascular ? "與" : ""}${hasCerebrovascular ? "腦血管" : ""}疾病，屬可考慮加嚴的族群；是否可耐受需醫療團隊評估。`,
         true,
       ),
@@ -124,12 +138,12 @@ export function resolveTargets(
         code: "orthostatic-risk",
         severity: "attention",
         message: "高齡合併心血管或腦血管疾病，降壓過於嚴格可能增加姿勢性低血壓與跌倒風險，血壓目標需個別化。",
-        ruleId: "bp-target-intensive",
-        citation: citationText(rule("bp-target-intensive")),
+        ruleId: t("t1-bp-target-intensive", "bp-target-intensive"),
+        citation: citationText(rule(t("t1-bp-target-intensive", "bp-target-intensive"))),
       });
     }
   } else {
-    targets.push(target("血壓", "bp-target-general", "未見已發生的心血管或腦血管疾病，套用一般目標"));
+    targets.push(target("血壓", t("t1-bp-target-general", "bp-target-general"), "未見已發生的心血管或腦血管疾病，套用一般目標"));
   }
 
   // ── 血脂 ──
@@ -170,7 +184,14 @@ export function resolveTargets(
     );
   }
   if (facts.diabetesType.verdict !== "type1-confirmed" && facts.diabetesType.verdict !== "type2-confirmed") {
-    undetermined.push(`糖尿病類型判定為 ${facts.diabetesType.verdict}，不得據以套用分型專屬建議。`);
+    undetermined.push(
+      `糖尿病類型判定為 ${facts.diabetesType.verdict}，上列目標一律套用第 2 型指引的數值。兩型的數值有實際差異（例如餐後血糖第 2 型為 80–160 mg/dL、第 1 型成人為低於 180 mg/dL），若這位病人是第 1 型，餐後血糖與追蹤起始時機都需重新判定。`,
+    );
+  }
+  if (isType1) {
+    undetermined.push(
+      "已依申報診斷碼判定為第 1 型，目標與追蹤間隔改用第 1 型指引。第 1 型的腎臟、眼底與神經篩檢起始時機取決於發病年份與年齡（發病滿 5 年、青春期或大於 10 歲），而申報資料判定不了發病年份，因此起始時機需醫療團隊確認。",
+    );
   }
 
   return { targets, safetyFlags, undetermined };
