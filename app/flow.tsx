@@ -28,46 +28,46 @@ export const FLOW_NODES: FlowNode[] = [
   { id: "rules", x: 16, y: 16, title: "指引門檻表", sub: "35 條 · 附章表頁次", tone: "flowContent" },
   { id: "ingest", x: 262, y: 16, title: "健保申報 JSON", sub: "用藥 · 檢驗 · R/PR · DCSI", tone: "flowNeutral" },
   { id: "decide", x: 16, y: 112, title: "確定性事實與判定", sub: "主題 · 目標 · 門檻（程式）", tone: "flowNeutral" },
-  // 原始 JSON 不會直接餵給模型：程式先整理成好讀文字，②③ 讀的是這一份。
-  // 先前圖上沒有這一格，等於把「模型看到的到底是什麼」漏掉了。
-  { id: "llmText", x: 508, y: 112, title: "LLM 好讀文字", sub: "整理 · 濾掉無關檢驗", tone: "flowNeutral" },
-  { id: "selector", x: 16, y: 208, title: "① 資料稽核", sub: "找矛盾 · 進醫師版", tone: "flowLlm" },
-  { id: "labReview", x: 262, y: 208, title: "② 檢驗判讀", sub: "讀原始紀錄", tone: "flowLlm" },
-  { id: "narrative", x: 508, y: 208, title: "③ 檢驗敘述", sub: "寫成病人看的段落", tone: "flowLlm" },
-  { id: "assemble", x: 262, y: 304, title: "驗證與組裝", sub: "數值比對 · 禁止事項", tone: "flowNeutral" },
-  { id: "modules", x: 508, y: 304, title: "固定衛教模組", sub: "已審內容 · 模型不改寫", tone: "flowContent" },
-  { id: "patientReport", x: 140, y: 400, title: "病人版衛教報告", sub: "正文來自固定模組", tone: "flowOut" },
-  { id: "clinicianReport", x: 384, y: 400, title: "醫師版報告", sub: "附指引章表與頁次", tone: "flowOut" },
+  // 整理與過濾拆成兩格：只畫「濾後」的話，看不出濾掉了什麼、也無從判斷該不該濾。
+  { id: "llmText", x: 508, y: 112, title: "LLM 好讀文字", sub: "整理全部紀錄 · 數值照抄", tone: "flowNeutral" },
+  { id: "labFilter", x: 508, y: 208, title: "濾掉無關檢驗", sub: "微生物 · 血氣 · 白分類…", tone: "flowNeutral" },
+  { id: "selector", x: 16, y: 304, title: "① 資料稽核", sub: "找矛盾 · 進醫師版", tone: "flowLlm" },
+  { id: "labReview", x: 262, y: 304, title: "② 檢驗判讀", sub: "讀原始紀錄", tone: "flowLlm" },
+  { id: "narrative", x: 508, y: 304, title: "③ 檢驗敘述", sub: "寫成病人看的段落", tone: "flowLlm" },
+  { id: "assemble", x: 262, y: 400, title: "驗證與組裝", sub: "數值比對 · 禁止事項", tone: "flowNeutral" },
+  { id: "modules", x: 508, y: 400, title: "固定衛教模組", sub: "已審內容 · 模型不改寫", tone: "flowContent" },
+  { id: "patientReport", x: 140, y: 496, title: "病人版衛教報告", sub: "正文來自固定模組", tone: "flowOut" },
+  { id: "clinicianReport", x: 384, y: 496, title: "醫師版報告", sub: "附指引章表與頁次", tone: "flowOut" },
 ];
 
 /*
  * 三次呼叫拿到的東西不一樣，線就要分開畫：
  *   ① 只拿確定性判定的結果（事實＋主題判定＋已解出的目標）
- *   ② 只拿 LLM 好讀文字的檢驗段
- *   ③ 兩者都拿——好讀文字給數值，判定給中期目標的目標值
- * 先前把判定拉線到 ②，那是錯的：② 從來沒收到過判定結果。
+ *   ② 只拿濾過的好讀文字
+ *   ③ 兩者都拿——濾過的文字給數值，判定給中期目標的目標值
  */
 const FLOW_EDGES = [
   // 門檻表與原始資料進入判定
   "M58 64 L58 112",
   "M360 64 L360 88 L170 88 L170 112",
-  // 原始資料同時整理成好讀文字
+  // 原始資料同時整理成好讀文字，再過濾
   "M360 64 L360 88 L606 88 L606 112",
-  // 判定 → ①、③
-  "M114 160 L114 208",
-  "M170 160 L170 172 L654 172 L654 208",
-  // 好讀文字 → ②、③
-  "M558 160 L558 188 L360 188 L360 208",
   "M606 160 L606 208",
+  // 判定 → ①、③
+  "M114 160 L114 304",
+  "M170 160 L170 272 L654 272 L654 304",
+  // 濾過的文字 → ②、③
+  "M558 256 L558 288 L360 288 L360 304",
+  "M606 256 L606 304",
   // 三次呼叫 → 組裝
-  "M114 256 L114 280 L360 280 L360 304",
-  "M360 256 L360 304",
-  "M606 256 L606 280 L360 280 L360 304",
+  "M114 352 L114 376 L360 376 L360 400",
+  "M360 352 L360 400",
+  "M606 352 L606 376 L360 376 L360 400",
   // 固定內容進場
-  "M508 328 L458 328",
+  "M508 424 L458 424",
   // 組裝 → 兩份成品
-  "M360 352 L360 376 L238 376 L238 400",
-  "M360 352 L360 376 L482 376 L482 400",
+  "M360 448 L360 472 L238 472 L238 496",
+  "M360 448 L360 472 L482 472 L482 496",
 ];
 
 /**
@@ -77,7 +77,7 @@ const FLOW_EDGES = [
 export const STATION_TO_NODES: Record<string, string[]> = {
   /** 內容庫不是管線上的一站，但它就是圖上那兩個虛線框。 */
   contentLibrary: ["rules", "modules"],
-  ingest: ["ingest", "llmText"],
+  ingest: ["ingest", "llmText", "labFilter"],
   decide: ["decide", "rules"],
   selector: ["selector"],
   labReview: ["labReview"],
@@ -100,7 +100,7 @@ export function FlowDiagram({
   return (
     <svg
       className={compact ? "flowDiagram flowMini" : "flowDiagram"}
-      viewBox="0 0 720 464"
+      viewBox="0 0 720 560"
       role="img"
       aria-label={
         active

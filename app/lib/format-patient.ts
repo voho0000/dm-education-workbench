@@ -162,7 +162,19 @@ function compactRecord(record: unknown): string {
     .join("｜");
 }
 
-export function formatPatientJson(value: unknown): string {
+export type FormatOptions = {
+  /**
+   * 是否濾掉與糖尿病長期照護無關的檢驗類別。
+   *
+   * 預設 true（送進 LLM 的版本）。傳 false 會得到未過濾的完整整理版，
+   * 頁面用它讓人看得到「濾掉前」與「濾掉後」的差別——只給結果而不給對照，
+   * 沒有人能判斷濾掉的是不是不該濾的。
+   */
+  skipIrrelevantLabs?: boolean;
+};
+
+export function formatPatientJson(value: unknown, options: FormatOptions = {}): string {
+  const skipIrrelevant = options.skipIrrelevantLabs ?? true;
   if (!isRecord(value)) {
     return [
       "【輸入資料】",
@@ -284,7 +296,7 @@ function skipForLlm(record: JsonRecord): boolean {
   let skippedForLlm = 0;
   for (const item of labUnique) {
     const record = isRecord(item.record) ? item.record : {};
-    if (skipForLlm(record)) {
+    if (skipIrrelevant && skipForLlm(record)) {
       skippedForLlm += item.count;
       continue;
     }

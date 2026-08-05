@@ -260,6 +260,14 @@ export default function Home() {
 
   const patientFacts = useMemo(() => (parsedRawJson ? extractPatientFacts(parsedRawJson) : null), [parsedRawJson]);
   const llmText = useMemo(() => (parsedRawJson ? formatPatientJson(parsedRawJson) : ""), [parsedRawJson]);
+  /**
+   * 未過濾的完整整理版。只用於頁面對照——只給「濾後」的結果而不給「濾前」，
+   * 沒有人能判斷濾掉的是不是不該濾的。送給模型的一律是 llmText。
+   */
+  const llmTextUnfiltered = useMemo(
+    () => (parsedRawJson ? formatPatientJson(parsedRawJson, { skipIrrelevantLabs: false }) : ""),
+    [parsedRawJson],
+  );
   /** 不呼叫 LLM 也產得出來的判定，讓使用者按下按鈕前就知道會納入什麼。 */
   const preview = useMemo(() => (patientFacts ? resolvePlan(null, patientFacts) : null), [patientFacts]);
 
@@ -603,11 +611,17 @@ export default function Home() {
                 ? "檢驗有採檢日"
                 : "檢驗只有費用年月、沒有採檢日，因此後面所有敘述都不得聲稱時序",
               "R／PR 欄位缺 key 就記成「未提供」，不補 0",
-              "送給模型的那一份濾掉微生物培養、藥敏、輸血配合、血液氣體、白血球分類、發炎與凝血——這些 prompt 本來就叫模型忽略，送了再叫它不要看等於付兩次錢。程式判定讀的是原始 JSON，不受影響。",
+              `整理成好讀文字後再濾一次：微生物培養、藥敏、輸血配合、血液氣體、白血球分類、發炎與凝血。這些 prompt 本來就叫模型忽略，送了再叫它不要看等於付兩次錢。上面兩份可以直接對照，${
+                llmTextUnfiltered && llmText
+                  ? `濾掉 ${formatNumber(charCount(llmTextUnfiltered) - charCount(llmText))} 字`
+                  : "看濾掉了什麼"
+              }。`,
+              "程式判定讀的是原始 JSON，不經過這道過濾——濾錯也不會影響主題、目標與門檻判定。",
             ]
           : [],
         outputs: [
-          { label: "LLM 好讀文字（給②③讀，已濾掉無關檢驗）", text: llmText },
+          { label: "① 整理成 LLM 好讀文字（全部紀錄）", text: llmTextUnfiltered },
+          { label: "② 濾掉與糖尿病無關的檢驗（這份才送給 ②③）", text: llmText },
           { label: "確定性事實（給下一站判定）", text: factsText },
         ],
       },
@@ -682,6 +696,7 @@ export default function Home() {
   }, [
     rawInput,
     llmText,
+    llmTextUnfiltered,
     patientFacts,
     preview,
     factsText,

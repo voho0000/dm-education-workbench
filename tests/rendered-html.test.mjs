@@ -65,7 +65,7 @@ test("首頁畫出實際的資料流：程式判定為主，三次 LLM 呼叫", 
   assert.doesNotMatch(html, /可能已改名/);
 
   // 每一站上方要有小流程圖標出「你在這裡」，而且和頁首那張共用同一份座標
-  assert.match(html, /資料流位置：目前在「健保申報 JSON、LLM 好讀文字」/);
+  assert.match(html, /資料流位置：目前在「健保申報 JSON、LLM 好讀文字、濾掉無關檢驗」/);
   assert.match(html, /資料流位置：目前在「驗證與組裝、固定衛教模組、病人版衛教報告、醫師版報告」/);
 });
 

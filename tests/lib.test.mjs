@@ -2991,3 +2991,25 @@ test("送進 LLM 的檢驗紀錄濾掉與糖尿病無關的類別，但核心指
   assert.ok(findings.some((item) => item.analyte === "creatinine"));
   assert.equal(facts.labRecordCount, 8, "程式端仍看得到全部原始筆數");
 });
+
+test("未過濾版本可以取得，供頁面對照濾前濾後", () => {
+  // 只給「濾後」而不給「濾前」，沒有人能判斷濾掉的是不是不該濾的。
+  const raw = {
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "13007C", order_name: "細菌培養", assay_item_name: "Organism 1", assay_value: "E. coli" },
+          { fee_ym: "202512", order_code: "09015C", order_name: "肌酸酐、血", assay_item_name: "Creatinine", assay_value: "2.1", unit_data: "mg/dL" },
+        ],
+      },
+    },
+  };
+  const filtered = formatPatientJson(raw);
+  const full = formatPatientJson(raw, { skipIrrelevantLabs: false });
+
+  assert.ok(!filtered.includes("Organism 1"), "預設要濾掉");
+  assert.ok(full.includes("Organism 1"), "未過濾版要看得到濾掉了什麼");
+  for (const text of [filtered, full]) assert.ok(text.includes("Creatinine=2.1"), "核心指標兩份都要有");
+  assert.ok(full.length > filtered.length);
+});
