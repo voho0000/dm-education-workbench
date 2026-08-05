@@ -30,7 +30,7 @@ export const FLOW_NODES: FlowNode[] = [
   { id: "decide", x: 16, y: 112, title: "確定性事實與判定", sub: "主題 · 目標 · 門檻（程式）", tone: "flowNeutral" },
   // 原始 JSON 不會直接餵給模型：程式先整理成好讀文字，②③ 讀的是這一份。
   // 先前圖上沒有這一格，等於把「模型看到的到底是什麼」漏掉了。
-  { id: "llmText", x: 508, y: 112, title: "LLM 好讀文字", sub: "程式整理 · 不改數值", tone: "flowNeutral" },
+  { id: "llmText", x: 508, y: 112, title: "LLM 好讀文字", sub: "整理 · 濾掉無關檢驗", tone: "flowNeutral" },
   { id: "selector", x: 16, y: 208, title: "① 資料稽核", sub: "找矛盾 · 進醫師版", tone: "flowLlm" },
   { id: "labReview", x: 262, y: 208, title: "② 檢驗判讀", sub: "讀原始紀錄", tone: "flowLlm" },
   { id: "narrative", x: 508, y: 208, title: "③ 檢驗敘述", sub: "寫成病人看的段落", tone: "flowLlm" },

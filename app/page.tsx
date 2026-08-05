@@ -592,7 +592,7 @@ export default function Home() {
         id: "ingest",
         kind: "program",
         title: "讀取申報 JSON",
-        role: "把申報 JSON 拆成兩份東西：一份給模型讀的純文字，一份給程式判定用的結構化事實。不改任何數值。",
+        role: "把申報 JSON 拆成兩份東西：一份給模型讀的純文字（濾掉與糖尿病無關的檢驗類別），一份給程式判定用的結構化事實。數值一律照抄。",
         state: llmText ? "ok" : "idle",
         inputs: [{ label: "原始 JSON", text: rawInput }],
         recipe: code(RECIPE.ingest),
@@ -603,10 +603,11 @@ export default function Home() {
                 ? "檢驗有採檢日"
                 : "檢驗只有費用年月、沒有採檢日，因此後面所有敘述都不得聲稱時序",
               "R／PR 欄位缺 key 就記成「未提供」，不補 0",
+              "送給模型的那一份濾掉微生物培養、藥敏、輸血配合、血液氣體、白血球分類、發炎與凝血——這些 prompt 本來就叫模型忽略，送了再叫它不要看等於付兩次錢。程式判定讀的是原始 JSON，不受影響。",
             ]
           : [],
         outputs: [
-          { label: "LLM 好讀文字（給②③讀原始紀錄）", text: llmText },
+          { label: "LLM 好讀文字（給②③讀，已濾掉無關檢驗）", text: llmText },
           { label: "確定性事實（給下一站判定）", text: factsText },
         ],
       },
