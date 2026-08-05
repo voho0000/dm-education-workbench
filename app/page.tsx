@@ -34,6 +34,7 @@ import {
 import { extractPatientFacts, factsForSelectorPrompt } from "./lib/patient-facts";
 import { SELF_CARE_VERSION } from "./lib/self-care-modules";
 import { DEFAULT_INPUT_TOKEN_LIMIT, charCount, formatNumber } from "./lib/tokens";
+import { validateReport } from "./lib/validate-report";
 
 type Stage = "idle" | "running";
 type OutputTab = "patient" | "clinician" | "rawSelector" | "rawLabReview" | "rawNarrative";
@@ -230,6 +231,8 @@ export default function Home() {
     narrative: "idle",
   });
   const [callNotes, setCallNotes] = useState<Record<string, { taken: string[]; problems: string[] }>>({});
+  /** 確定性輸出驗證的通過數，顯示在「驗證與組裝」那一站。 */
+  const [validationLine, setValidationLine] = useState("");
   const [checks, setChecks] = useState<string[]>([]);
   const [stage, setStage] = useState<Stage>("idle");
   const [runStartedAt, setRunStartedAt] = useState<number | null>(null);
@@ -356,6 +359,7 @@ export default function Home() {
     setChecks([]);
     setRawOutputs({});
     setCallNotes({});
+    setValidationLine("");
     setCallState({ selector: "running", labReview: "running", narrative: "running" });
     if (hasHardBlocker(blockers) || !patientFacts) return;
 
@@ -475,7 +479,30 @@ export default function Home() {
       );
       setOutputTab("patient");
 
+      /*
+       * 確定性輸出驗證器。
+       *
+       * 它一直存在，但只有批次腳本在跑——網站產出的報告從來沒被驗證過。
+       * 這 11 項全部是程式 100% 判得出來的機械規則（內部代碼外洩、風險標籤、
+       * 缺章節、數字無來源、叫病人自行改藥…），不跑等於白寫。
+       */
+      const validation = validateReport({
+        report: assemblePatientReport(plan, { ...options, labNarrative: labNarrative ?? undefined }),
+        patientText: llmText,
+        profile: "modules",
+      });
+
+      setValidationLine(
+        `確定性輸出驗證：${validation.passedCount}／${validation.applicableCount} 項通過` +
+          (validation.passedCount === validation.applicableCount ? "" : "（未過的列在下方）"),
+      );
+
       const found: string[] = [];
+      for (const result of validation.results) {
+        if (result.applicable && !result.passed) {
+          found.push(`輸出驗證未過｜${result.label}：${result.violations.slice(0, 3).join("；")}`);
+        }
+      }
       const failed = [
         audit ? null : "① 資料稽核",
         labReview ? null : "② 檢驗判讀",
@@ -638,6 +665,7 @@ export default function Home() {
         steps: patientReport
           ? [
               "解析三份原始回應；任何一份解析不了就整份丟棄，該段退回程式輸出",
+              ...(validationLine ? [validationLine] : []),
               "把③敘述裡的每個數字比對回原始檢驗紀錄，對不上的標記為未核實",
               "掃描禁止事項（時序宣稱、風險標籤、叫病人自行停藥等）",
               "依固定模組逐字組裝兩份報告；未通過的部分就地加註警語，文字本身不改寫",
@@ -666,6 +694,7 @@ export default function Home() {
     patientReport,
     clinicianReport,
     checks,
+    validationLine,
   ]);
 
   const activeOutputTab = OUTPUT_TABS.find((item) => item.id === outputTab) ?? OUTPUT_TABS[0];

@@ -2807,3 +2807,50 @@ test("eGFR 單位裡的 1.73 不算未核實數字", () => {
   );
   assert.deepEqual(check.uncitedNumbers, []);
 });
+
+test("modules profile 不再跳過四項對新格式一樣有效的機械檢查", () => {
+  // 這四項先前被鎖在 v14 profile——那是同事舊格式。實測 LLM 寫的中期目標
+  // 曾經用 "- " 開頭的清單，而當時這項檢查是關的，等於沒人看。
+  const bad = [
+    "糖尿病衛教報告",
+    "報告產生日期：2026/08/05",
+    "【觀察摘要：您的檢驗數值】",
+    "- 這一行用了破折號項目符號",
+    "**這一行用了 Markdown 粗體**",
+    "本次評估屬於高風險",
+    "【中期目標：下一階段】",
+    "【併發症風險：與您有關的健康重點】",
+    "【預防叮嚀：日常照護】",
+    "【什麼情況要立刻就醫】",
+  ].join("\n");
+  const result = validateReport({ report: bad, patientText: "", profile: "modules" });
+  const failed = result.results.filter((item) => item.applicable && !item.passed).map((item) => item.id);
+  for (const id of ["no-symbol-bullets", "no-markdown-emphasis", "no-risk-labels", "iso-report-date"]) {
+    assert.ok(failed.includes(id), `${id} 應該要抓到`);
+  }
+});
+
+test("modules profile 的必要段落檢查用的是新的六段", () => {
+  const missingOne = [
+    "【觀察摘要：您的檢驗數值】",
+    "【中期目標：下一階段】",
+    "【預防叮嚀：日常照護】",
+    "【什麼情況要立刻就醫】",
+  ].join("\n");
+  const result = validateReport({ report: missingOne, patientText: "", profile: "modules" });
+  const headings = result.results.find((item) => item.id === "required-headings");
+  assert.equal(headings.applicable, true, "modules profile 必須檢查段落");
+  assert.equal(headings.passed, false);
+  assert.match(headings.violations.join("｜"), /併發症風險/);
+
+  // 順序錯了也要抓到
+  const wrongOrder = [
+    "【併發症風險：與您有關的健康重點】",
+    "【觀察摘要：您的檢驗數值】",
+    "【中期目標：下一階段】",
+    "【預防叮嚀：日常照護】",
+    "【什麼情況要立刻就醫】",
+  ].join("\n");
+  const reordered = validateReport({ report: wrongOrder, patientText: "", profile: "modules" });
+  assert.equal(reordered.results.find((item) => item.id === "required-headings").passed, false);
+});

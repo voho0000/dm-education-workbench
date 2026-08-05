@@ -71,6 +71,20 @@ const REQUIRED_V14_HEADINGS = [
   "五、溫馨叮嚀",
 ];
 
+/**
+ * modules profile 的六個段落，順序即為報告順序。
+ *
+ * 對齊健保署要求的五大核心面向；就醫警訊收尾。缺任何一段或順序錯了都是
+ * 組裝出問題，不是內容問題——所以這是機械檢查得出來的事。
+ */
+const REQUIRED_MODULE_HEADINGS = [
+  "【觀察摘要：",
+  "【中期目標：",
+  "【併發症風險：",
+  "【預防叮嚀：",
+  "【什麼情況要立刻就醫】",
+];
+
 const RISK_LABEL_PATTERN = /(高風險|中風險|低風險)/g;
 const RISK_LABEL_ALLOWED = /高風險族群/;
 const INTERNAL_CODE_PATTERN = /\b(?:R[1-7]|PR[1-7]|DCSI)\b|總分|得分|[0-9０-９]\s*分(?![鐘鍾])/g;
@@ -135,7 +149,7 @@ export function validateReport(args: ValidateArgs): ValidationReport {
     check(
       "no-symbol-bullets",
       "沒有任何一行以 - * + • ‧ 開頭",
-      isV14,
+      isV14 || isModules,
       collectLineViolations(report, (line) => {
         const trimmed = line.trimStart();
         return /^[-*+•‧]\s/.test(trimmed) ? trimmed.slice(0, 60) : null;
@@ -147,7 +161,7 @@ export function validateReport(args: ValidateArgs): ValidationReport {
     check(
       "no-markdown-emphasis",
       "沒有 Markdown 粗體、標題符號或表格符號",
-      isV14,
+      isV14 || isModules,
       collectLineViolations(report, (line) => {
         if (/\*\*/.test(line)) return `使用了 ** ：${line.trim().slice(0, 60)}`;
         if (/^\s*#/.test(line)) return `使用了 # 標題：${line.trim().slice(0, 60)}`;
@@ -161,7 +175,7 @@ export function validateReport(args: ValidateArgs): ValidationReport {
     check(
       "no-risk-labels",
       "沒有把高／中／低風險當成分級標籤",
-      isV14,
+      isV14 || isModules,
       collectLineViolations(report, (line) => {
         const matches = line.match(RISK_LABEL_PATTERN);
         if (!matches) return null;
@@ -192,15 +206,16 @@ export function validateReport(args: ValidateArgs): ValidationReport {
   results.push(
     check(
       "required-headings",
-      "五大標題逐字完整且順序正確",
-      isV14,
+      isModules ? "六個段落逐字完整且順序正確" : "五大標題逐字完整且順序正確",
+      isV14 || isModules,
       (() => {
-        const positions = REQUIRED_V14_HEADINGS.map((heading) => ({ heading, at: report.indexOf(heading) }));
+        const headings = isModules ? REQUIRED_MODULE_HEADINGS : REQUIRED_V14_HEADINGS;
+        const positions = headings.map((heading) => ({ heading, at: report.indexOf(heading) }));
         const missing = positions.filter((item) => item.at === -1).map((item) => `缺少「${item.heading}」`);
         if (missing.length) return missing;
         const order = positions.map((item) => item.at);
         const sorted = [...order].sort((a, b) => a - b);
-        return order.every((value, index) => value === sorted[index]) ? [] : ["五大標題出現順序與規定不符"];
+        return order.every((value, index) => value === sorted[index]) ? [] : ["段落出現順序與規定不符"];
       })(),
     ),
   );
@@ -232,7 +247,7 @@ export function validateReport(args: ValidateArgs): ValidationReport {
     check(
       "iso-report-date",
       "報告日期使用 YYYY-MM-DD",
-      isV14,
+      isV14 || isModules,
       (() => {
         const badFormats = [...report.matchAll(/\d{4}\s*年\s*\d{1,2}\s*月\s*\d{1,2}\s*日|\d{4}\/\d{1,2}\/\d{1,2}/g)].map(
           (match) => match[0],
