@@ -149,8 +149,26 @@ const MATCHERS: Matcher[] = [
   },
   {
     analyte: "creatinine",
-    name: /^(Creatinine|CRE\(肌酸酐\)|Creatinine\s*肌酸酐)/i,
-    excludeName: /Dipstick|\(B\)/i,
+    /*
+     * 靠名稱窮舉一定會漏。同一個醫令底下實測出現六種寫法——
+     * CRE(11)、CRE(肌酸酐)(8)、CREA(1)、Creatinine(11)、Creatinine(B)(9)、
+     * Creatinine 肌酸酐(1)——舊的比對式只認得其中三種，而且還把 `(B)` 排掉，
+     * 但 (B) 就是 blood、正是我們要的血清肌酸酐。41 筆裡只抓到 20 筆，
+     * 於是對兩位病人謊報「沒有肌酸酐紀錄」。
+     *
+     * 改以醫令代碼為準：09015C 是健保的「肌酸酐、血」。這跟血糖改用
+     * 09005C／09140C 判定是同一個教訓——名稱怎麼寫都可能變，醫令代碼不會。
+     */
+    name: /(Creatinine|\bCREA?\b|肌酸酐)/i,
+    /*
+     * 09015C 底下同時掛著由肌酸酐換算的 eGFR（79 筆），那是另一個指標。
+     * eGFR 有自己的比對式而且排在前面，但正確性不該靠陣列順序保證。
+     * Dipstick 是尿液試紙；「CRE screening」是抗藥菌培養，跟腎功能無關——
+     * 名稱放寬之後正好會咬到它，所以一起排除。
+     */
+    excludeName: /eGFR|Dipstick|Albumin\s*\/\s*Creatinine|screening/i,
+    includeOrderCodes: /^09015C$/,
+    excludeOrderCodes: /^(06012C|06013C|13007C)$/,
     unit: /mg\s*\/?\s*d[lL]/i,
   },
 ];

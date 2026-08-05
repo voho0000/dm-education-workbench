@@ -63,6 +63,10 @@ test("首頁畫出實際的資料流：程式判定為主，三次 LLM 呼叫", 
   assert.match(html, /parseLabNarrative\(\)/);
   // 切不到的符號會留下這個字樣，代表函式改名而食譜沒跟上
   assert.doesNotMatch(html, /可能已改名/);
+
+  // 每一站上方要有小流程圖標出「你在這裡」，而且和頁首那張共用同一份座標
+  assert.match(html, /資料流位置：目前在「健保申報 JSON」/);
+  assert.match(html, /資料流位置：目前在「驗證與組裝、病人版衛教報告、醫師版報告」/);
 });
 
 test("三份固定內容攤在頁面上，逐條看得到，且標明未核准", async () => {

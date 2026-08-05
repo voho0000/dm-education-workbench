@@ -109,6 +109,13 @@ textarea { font-family: inherit; resize: vertical; }
 .flowSub { font-size: 11px; fill: var(--muted); }
 .flowLine path { fill: none; stroke: rgba(15, 42, 34, 0.32); stroke-width: 1.4; }
 
+/* 縮圖：只留標題，沒點亮的方框淡出，讓「你在這裡」一眼看得出來 */
+.flowMini { max-width: 420px; }
+.flowMini .flowTitle { font-size: 15px; }
+.flowDim { opacity: 0.28; }
+.flowActive rect { stroke-width: 2.4; }
+.flowActive .flowTitle { font-weight: 800; }
+
 /* ── 卡片 ─────────────────────────────────────────────── */
 .stepCard {
   width: var(--page);
@@ -376,6 +383,12 @@ textarea { font-family: inherit; resize: vertical; }
 .pipeState-failed { background: rgba(168, 60, 53, 0.12); color: #8d322c; }
 .pipeState-skipped { background: var(--paper); color: var(--muted); }
 .pipeRole { margin: 8px 0 0; color: var(--muted); font-size: 12px; line-height: 1.75; }
+.pipeMap {
+  margin: 12px 0 0;
+  padding: 10px 12px;
+  border: 1px solid var(--line); border-radius: 10px;
+  background: #fcfcfa;
+}
 
 /* 材料／食譜／成品三段要分得開，不然點開幾個就分不清哪個是哪個 */
 .pipeGroup { margin: 14px 0 0; }

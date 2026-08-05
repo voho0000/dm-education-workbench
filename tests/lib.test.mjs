@@ -45,7 +45,7 @@ import {
   MODULE_CATALOG_VERSION,
 } from "../app/lib/education-modules.ts";
 import { parseLabReview, labSectionOf, LAB_REVIEW_PROMPT } from "../app/lib/lab-llm.ts";
-import { extractLabFindings, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
+import { analyteForItemName, extractLabFindings, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
 import { parseLabNarrative, formatLabNarrative, LAB_NARRATIVE_PROMPT } from "../app/lib/lab-narrative.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
 import { extractSymbol, extractSymbols } from "../app/lib/source-extract.ts";
@@ -2601,4 +2601,53 @@ test("原始碼切片切得出完整函式，切不到時明說", async () => {
   assert.equal(extractSymbol(source, "根本不存在的函式"), null);
   // 切不到要留下痕跡，不能靜默略過
   assert.match(extractSymbols(source, ["根本不存在的函式"], "lab-narrative.ts"), /找不到/);
+});
+
+test("肌酸酐以醫令代碼判定，六種名稱寫法都算，同醫令下的 eGFR 與抗藥菌篩檢不算", () => {
+  const lab = (order, name, value, unit = "mg/dL") => ({
+    fee_ym: "202601",
+    order_code: order,
+    order_name: order === "09015C" ? "肌酸酐、血" : "其他",
+    assay_item_name: name,
+    assay_value: value,
+    unit_data: unit,
+  });
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: {
+      labData: {
+        rObject: [
+          // 實測出現過的六種寫法，全部都是血清肌酸酐
+          lab("09015C", "CRE", "1.10"),
+          lab("09015C", "CRE(肌酸酐)", "1.20"),
+          lab("09015C", "CREA", "1.30"),
+          lab("09015C", "Creatinine", "1.40"),
+          lab("09015C", "Creatinine(B)", "1.50"),
+          lab("09015C", "Creatinine 肌酸酐", "1.60"),
+          // 同一個醫令底下的 eGFR 是另一個指標，不得混進肌酸酐
+          lab("09015C", "eGFR(CKD-EPI)", "55", "無"),
+          // 尿液試紙不是血清肌酸酐
+          lab("06012C", "Creatinine(Dipstick)", "50"),
+          // 抗藥菌培養，跟腎功能無關——名稱放寬後正好會咬到它
+          lab("13007C", "CRE screening", "1"),
+        ],
+      },
+    },
+  });
+
+  const findings = extractLabFindings(facts);
+  const creatinine = findings.find((item) => item.analyte === "creatinine");
+  assert.ok(creatinine, "六種寫法都要被認出來");
+  assert.equal(creatinine.values.length, 6, "六筆全收，一筆都不能漏");
+  assert.equal(creatinine.min, 1.1);
+  assert.equal(creatinine.max, 1.6);
+
+  // eGFR 要落在自己的分類，不能被肌酸酐吃掉
+  assert.ok(findings.find((item) => item.analyte === "eGFR"), "eGFR 要獨立成項");
+
+  // 缺檢判定：有紀錄就不該再說「沒有肌酸酐紀錄」
+  assert.equal(analyteForItemName("CRE", "mg/dL"), "creatinine");
+  assert.equal(analyteForItemName("Creatinine(B)", "mg/dL"), "creatinine");
+  assert.equal(analyteForItemName("CRE screening"), null, "抗藥菌篩檢不是肌酸酐");
+  assert.notEqual(analyteForItemName("eGFR(MDRD)"), "creatinine");
 });

@@ -13,6 +13,7 @@
  */
 
 import { useState } from "react";
+import { FlowDiagram, STATION_TO_NODES } from "./flow";
 import { charCount, formatNumber } from "./lib/tokens";
 
 export type StationState = "idle" | "running" | "ok" | "failed" | "skipped";
@@ -101,6 +102,13 @@ function StationCard({ station, index }: { station: Station; index: number }) {
         <span className={`pipeState pipeState-${station.state}`}>{STATE_LABEL[station.state]}</span>
       </div>
       <p className="pipeRole">{station.role}</p>
+
+      {/* 這一站在整條流程的哪個位置。點亮的方框就是它。 */}
+      {STATION_TO_NODES[station.id] ? (
+        <div className="pipeMap">
+          <FlowDiagram highlight={STATION_TO_NODES[station.id]} compact />
+        </div>
+      ) : null}
 
       <Group label="材料" ports={station.inputs} />
       <Group

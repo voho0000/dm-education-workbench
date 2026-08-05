@@ -4,6 +4,7 @@ import { ChangeEvent, DragEvent, useEffect, useMemo, useRef, useState } from "re
 import { BUILD_ID } from "./build-id";
 import { ContentLibrary } from "./content-library";
 import { DecisionTrace } from "./decision-trace";
+import { FlowDiagram } from "./flow";
 import { Pipeline, type Station, type StationState } from "./pipeline";
 // 食譜讀的是真檔案。抄一份說明到別處一定會過時，而且沒有機制會發現。
 import formatPatientSource from "./lib/format-patient.ts?raw";
@@ -200,54 +201,6 @@ function CompositionPanel({ input }: { input: ComposedInput }) {
         ②③ 讀的是同一份檢驗紀錄，重複的部分在這裡看得見。本工具在任何情況下都不會自動截斷病人資料。
       </p>
     </details>
-  );
-}
-
-/** 流程圖。畫的是實際的資料流——每個方框都對應一個函式或一次呼叫。 */
-function FlowDiagram() {
-  const box = (x: number, y: number, w: number, title: string, sub: string, tone: string) => (
-    <g key={`${x}-${y}`} className={tone}>
-      <rect x={x} y={y} width={w} height={48} rx={6} />
-      <text className="flowTitle" x={x + w / 2} y={y + 21} textAnchor="middle">
-        {title}
-      </text>
-      <text className="flowSub" x={x + w / 2} y={y + 38} textAnchor="middle">
-        {sub}
-      </text>
-    </g>
-  );
-  return (
-    <svg
-      className="flowDiagram"
-      viewBox="0 0 720 296"
-      role="img"
-      aria-label="資料流：程式判定為主，三次 LLM 呼叫只負責規則做不到的事"
-    >
-      <defs>
-        <marker id="flowArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse">
-          <path d="M2 1L8 5L2 9" fill="none" stroke="currentColor" strokeWidth="1.4" strokeLinecap="round" />
-        </marker>
-      </defs>
-      {box(16, 16, 196, "健保申報 JSON", "用藥 · 檢驗 · R/PR · DCSI", "flowNeutral")}
-      {box(16, 112, 196, "確定性事實與判定", "主題 · 目標 · 門檻（程式）", "flowNeutral")}
-      {box(262, 16, 196, "① 模組挑選", "只回代碼與優先序", "flowLlm")}
-      {box(262, 112, 196, "② 檢驗判讀", "讀原始紀錄", "flowLlm")}
-      {box(262, 208, 196, "③ 檢驗敘述", "寫成病人看的段落", "flowLlm")}
-      {box(508, 112, 196, "驗證與組裝", "數值比對 · 禁止事項", "flowNeutral")}
-      {box(508, 16, 196, "病人版衛教報告", "正文來自固定模組", "flowOut")}
-      {box(508, 208, 196, "醫師版報告", "附指引章表與頁次", "flowOut")}
-      <g className="flowLine" markerEnd="url(#flowArrow)">
-        <path d="M114 64 L114 112" />
-        <path d="M212 40 L262 40" />
-        <path d="M212 136 L262 136" />
-        <path d="M212 152 L237 152 L237 232 L262 232" />
-        <path d="M458 40 L483 40 L483 130 L508 130" />
-        <path d="M458 136 L508 136" />
-        <path d="M458 232 L483 232 L483 142 L508 142" />
-        <path d="M606 112 L606 64" />
-        <path d="M606 160 L606 208" />
-      </g>
-    </svg>
   );
 }
 
