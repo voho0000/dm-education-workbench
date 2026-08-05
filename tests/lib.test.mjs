@@ -13,8 +13,8 @@ import {
   assemblePatientReport,
   decideTopics,
   decisionsForPrompt,
-  parseModuleSelection,
-  MODULE_SELECTOR_PROMPT,
+  parseDataAudit,
+  DATA_AUDIT_PROMPT,
   PR_HIGH,
   PR_LOW,
   PR_MODERATE,
@@ -332,17 +332,48 @@ test("分型補充模組只在類型明確確認時附加", () => {
   assert.ok(!planB.patientModuleIds.includes("TYPE-UNCLEAR"));
 });
 
-test("LLM 指定不在已納入清單中的優先項會被忽略並記錄", () => {
-  const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-03", R1: 2 }, rawSources: {} });
-  const selection = parseModuleSelection(
-    JSON.stringify({ priorities: [{ module_id: "HEART-CORE", why: "x" }, { module_id: "EYE-CORE", why: "y" }] }),
-  );
-  assert.deepEqual(resolvePlan(selection, facts).rejectedPriorities, ["HEART-CORE"]);
+
+test("parseDataAudit 容許模型多包一層 code fence，並保留稽核內容", () => {
+  const raw = [
+    "```json",
+    JSON.stringify({
+      echo: { age_years: 66, dcsi: 3 },
+      clinician_notes: ["請確認最新腎功能"],
+      data_concerns: ["CKD 欄位與 eGFR 矛盾"],
+      disagreements: [{ topic: "R3", program_decision: "不納入", your_view: "eGFR 22.8" }],
+    }),
+    "```",
+  ].join("\n");
+  const audit = parseDataAudit(raw);
+  assert.deepEqual(audit.echo, { ageYears: 66, dcsi: 3 });
+  assert.deepEqual(audit.clinician_notes, ["請確認最新腎功能"]);
+  assert.deepEqual(audit.data_concerns, ["CKD 欄位與 eGFR 矛盾"]);
+  assert.equal(audit.disagreements[0].topic, "R3");
 });
 
-test("parseModuleSelection 容許模型多包一層 code fence", () => {
-  const raw = ["```json", '{"priorities":[{"module_id":"EYE-CORE","why":"a"}]}', "```"].join("\n");
-  assert.equal(parseModuleSelection(raw).priorities[0].module_id, "EYE-CORE");
+test("資料稽核的結果會進醫師版，不再被丟棄", () => {
+  // 先前這一整段被程式丟棄——付了一次呼叫的錢，然後把它抓到的東西扔掉。
+  const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-03", R5: 2 }, rawSources: {} });
+  const audit = {
+    echo: null,
+    clinician_notes: ["請確認最新腎功能狀況與用藥安全"],
+    data_concerns: ["基本資料標示慢性腎臟病：否，但 eGFR 最低曾達 22.8"],
+    disagreements: [],
+  };
+  const report = assembleClinicianReport(resolvePlan(audit, facts), facts, {
+    reportDate: "2026-08-03",
+    dataCutoff: null,
+  });
+  assert.match(report, /資料稽核（由模型提出，未經程式驗證）/);
+  assert.match(report, /\[請確認\] 請確認最新腎功能狀況與用藥安全/);
+  assert.match(report, /\[資料疑慮\] 基本資料標示慢性腎臟病：否/);
+
+  // 沒跑稽核時不得出現空章節
+  const without = assembleClinicianReport(resolvePlan(null, facts), facts, {
+    reportDate: "2026-08-03",
+    dataCutoff: null,
+  });
+  assert.doesNotMatch(without, /資料稽核/);
 });
 
 // ── 自我照護模組 ──────────────────────────────────────────────
@@ -534,23 +565,6 @@ test("decisionsForPrompt 不得把已納入的模組標成未納入", () => {
   }
 });
 
-test("簡短提醒的主題也算有效優先項，只有真的沒出現的才被忽略", () => {
-  const facts = extractPatientFacts({
-    userInput: { REPORT_DATE: "2026-08-03", R4: 2, PR2: PR_MODERATE, PR1: PR_LOW },
-    rawSources: {},
-  });
-  const selection = parseModuleSelection(
-    JSON.stringify({
-      priorities: [
-        { module_id: "NERVE-CORE", why: "已發生" },
-        { module_id: "STROKE-CORE", why: "簡短提醒但仍需留意" },
-        { module_id: "EYE-CORE", why: "最低分級已排除，不該被接受" },
-      ],
-    }),
-  );
-  const plan = resolvePlan(selection, facts);
-  assert.deepEqual(plan.rejectedPriorities, ["EYE-CORE"], "只有完全未出現在報告中的主題才該被忽略");
-});
 
 test("醫師版不列每份都一樣的通則性廢話", () => {
   const facts = extractPatientFacts({
@@ -576,7 +590,7 @@ test("醫師版不列每份都一樣的通則性廢話", () => {
 
 test("LLM 提出異議時仍會出現在安全提示中", () => {
   const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-03", R2: 2 }, rawSources: {} });
-  const selection = parseModuleSelection(
+  const selection = parseDataAudit(
     JSON.stringify({
       priorities: [],
       disagreements: [{ topic: "R2", program_decision: "已發生", your_view: "建議核實" }],
@@ -2223,15 +2237,15 @@ test("同名但檢體不同的項目要標出尿液，血液那筆不得誤標",
 test("選模組輸出要抄回年齡與 DCSI，供核對是不是同一位病人", () => {
   // 輸出檔沒有病人識別碼是刻意的，代價是放錯資料夾不會有任何症狀——
   // 實測就發生過兩位病人的輸出對調，是靠肉眼讀出「病程 1.6 年」對不上才發現。
-  assert.match(MODULE_SELECTOR_PROMPT, /"echo".*age_years.*dcsi/s);
+  assert.match(DATA_AUDIT_PROMPT, /"echo".*age_years.*dcsi/s);
 
-  const parsed = parseModuleSelection(
+  const parsed = parseDataAudit(
     JSON.stringify({ echo: { age_years: 75, dcsi: 6 }, priorities: [], clinician_notes: [], data_concerns: [], disagreements: [] }),
   );
   assert.deepEqual(parsed.echo, { ageYears: 75, dcsi: 6 });
 
   // 舊格式沒有 echo，要能解析但標為無法核對
-  const legacy = parseModuleSelection(JSON.stringify({ priorities: [] }));
+  const legacy = parseDataAudit(JSON.stringify({ priorities: [] }));
   assert.equal(legacy.echo, null);
 });
 
@@ -2443,7 +2457,7 @@ test("生病日衛教依藥物類別觸發，並轉成「事先確認」而非�
   assert.ok(!metformin.includes("酮酸中毒"), "非 SGLT2i 使用者不該看到那一段");
 });
 
-test("輸入估算要涵蓋三次呼叫，不能只算模組挑選那一次", () => {
+test("輸入估算要涵蓋三次呼叫，不能只算資料稽核那一次", () => {
   const input = buildRunInput({
     selectorPrompt: "S".repeat(100),
     factsText: "F".repeat(200),

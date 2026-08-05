@@ -41,7 +41,7 @@ test("首頁畫出實際的資料流：程式判定為主，三次 LLM 呼叫", 
   const html = await (await render()).text();
 
   assert.match(html, /資料流：程式判定為主，三次 LLM 呼叫只負責規則做不到的事/);
-  assert.match(html, /① 模組挑選/);
+  assert.match(html, /① 資料稽核/);
   assert.match(html, /② 檢驗判讀/);
   assert.match(html, /③ 檢驗敘述/);
   assert.match(html, /病人版衛教報告/);

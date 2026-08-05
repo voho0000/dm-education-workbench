@@ -27,7 +27,7 @@ export type ComposedInput = {
 
 /**
  * 一次按下會並行送出三個請求，估算必須是三者的總和。
- * 先前只算了模組挑選那一次，把實際成本低估了一半以上。
+ * 先前只算了資料稽核那一次，把實際成本低估了一半以上。
  */
 function part(label: string, text: string, count?: TokenCount): InputPart {
   const resolved = count ?? { tokens: estimateTokens(text), method: "estimate" as const };
@@ -43,8 +43,8 @@ export function buildRunInput(args: {
   narrativeText: string;
 }): ComposedInput {
   const calls = [
-    { label: "① 模組挑選：system prompt", text: args.selectorPrompt },
-    { label: "① 模組挑選：病人事實摘要", text: args.factsText },
+    { label: "① 資料稽核：system prompt", text: args.selectorPrompt },
+    { label: "① 資料稽核：病人事實摘要", text: args.factsText },
     { label: "② 檢驗判讀：system prompt", text: args.labReviewPrompt },
     { label: "② 檢驗判讀：檢驗紀錄", text: args.labText },
     { label: "③ 檢驗敘述：system prompt", text: args.narrativePrompt },

@@ -248,7 +248,7 @@ export function DecisionTrace({ plan, facts }: { plan: ResolvedPlan; facts: Pati
           <li className="traceRow">
             <span className="traceLlmTag">①</span>
             <span className="traceArrow">→</span>
-            <span className="traceValue">模組挑選：只回代碼與優先序，改不了上面第 1 段的判定</span>
+            <span className="traceValue">資料稽核：找資料的矛盾與需人工確認之處，改不了上面的任何判定</span>
           </li>
           <li className="traceRow">
             <span className="traceLlmTag">②</span>

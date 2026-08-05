@@ -24,11 +24,11 @@ import { RULES_BY_ID, RULES_SOURCE, RULES_VERSION } from "./lib/guideline-rules"
 import { LAB_NARRATIVE_PROMPT, buildNarrativeInput, parseLabNarrative } from "./lib/lab-narrative";
 import { LAB_REVIEW_PROMPT, labSectionOf, parseLabReview } from "./lib/lab-llm";
 import {
-  MODULE_SELECTOR_PROMPT,
+  DATA_AUDIT_PROMPT,
   assembleClinicianReport,
   assemblePatientReport,
   decisionsForPrompt,
-  parseModuleSelection,
+  parseDataAudit,
   resolvePlan,
 } from "./lib/module-plan";
 import { extractPatientFacts, factsForSelectorPrompt } from "./lib/patient-facts";
@@ -54,9 +54,9 @@ const MODEL_OPTIONS = [
 const PROMPTS: Array<{ id: PromptId; label: string; text: string; role: string }> = [
   {
     id: "selector",
-    label: "① 模組挑選",
-    role: "只回模組代碼、優先序與異議。它寫的任何文字都不會出現在報告裡。",
-    text: MODULE_SELECTOR_PROMPT,
+    label: "① 資料稽核",
+    role: "找資料的矛盾與需人工確認之處，結果進醫師版。改不了程式的任何判定。",
+    text: DATA_AUDIT_PROMPT,
   },
   {
     id: "labReview",
@@ -83,7 +83,7 @@ const RECIPE = {
     { label: "module-plan.ts — resolvePlan()", text: extractSymbols(modulePlanSource, ["resolvePlan"], "module-plan.ts") },
   ],
   selector: [
-    { label: "module-plan.ts — parseModuleSelection()", text: extractSymbols(modulePlanSource, ["parseModuleSelection"], "module-plan.ts") },
+    { label: "module-plan.ts — parseDataAudit()", text: extractSymbols(modulePlanSource, ["parseDataAudit"], "module-plan.ts") },
   ],
   labReview: [
     { label: "lab-llm.ts — parseLabReview()", text: extractSymbols(labLlmSource, ["parseLabReview"], "lab-llm.ts") },
@@ -102,7 +102,7 @@ const RECIPE = {
 const OUTPUT_TABS: Array<{ id: OutputTab; label: string; filename: string; note: string }> = [
   { id: "patient", label: "病人版衛教報告", filename: "病人版衛教報告.txt", note: "併發症風險與預防叮嚀逐字來自固定模組；觀察摘要、短期建議、中期目標三段由模型撰寫。" },
   { id: "clinician", label: "醫師版報告", filename: "醫師版報告.txt", note: "由固定模組組裝，附指引章表與頁次。" },
-  { id: "rawSelector", label: "① 原始回應", filename: "原始回應-模組挑選.txt", note: "模組挑選的完整回應，未解析。它的意見改不了程式的主題判定，僅供核對。" },
+  { id: "rawSelector", label: "① 原始回應", filename: "原始回應-資料稽核.txt", note: "資料稽核的完整回應，未解析。它的意見改不了程式的判定，結果附在醫師版最後一節。" },
   { id: "rawLabReview", label: "② 原始回應", filename: "原始回應-檢驗判讀.txt", note: "檢驗判讀的完整回應，未解析。報告中只採用通過數值比對的部分。" },
   { id: "rawNarrative", label: "③ 原始回應", filename: "原始回應-檢驗敘述.txt", note: "檢驗敘述的完整回應，未解析。報告中的版本已經過數值比對與禁止事項掃描。" },
 ];
@@ -292,7 +292,7 @@ export default function Home() {
   const composed = useMemo<ComposedInput>(
     () =>
       buildRunInput({
-        selectorPrompt: MODULE_SELECTOR_PROMPT,
+        selectorPrompt: DATA_AUDIT_PROMPT,
         factsText: selectorInput,
         labReviewPrompt: LAB_REVIEW_PROMPT,
         labText: labInput,
@@ -380,7 +380,7 @@ export default function Home() {
       // 三次呼叫互相獨立，並行送出。任何一次失敗都不擋住其餘——主題判定與
       // 指引目標完全不依賴 LLM，報告一定產得出來，缺的部分退回程式輸出。
       const settled = await Promise.allSettled([
-        call(MODULE_SELECTOR_PROMPT, selectorInput),
+        call(DATA_AUDIT_PROMPT, selectorInput),
         call(LAB_REVIEW_PROMPT, labInput),
         call(LAB_NARRATIVE_PROMPT, narrativeInput),
       ]);
@@ -403,38 +403,30 @@ export default function Home() {
         rawNarrative: textOf(2) ?? "",
       });
 
-      const selection = attempt(textOf(0), parseModuleSelection);
+      const audit = attempt(textOf(0), parseDataAudit);
       const labReview = attempt(textOf(1), (raw) => parseLabReview(raw, patientFacts));
       const labNarrative = attempt(textOf(2), (raw) => parseLabNarrative(raw, patientFacts));
 
       setCallState({
-        selector: settled[0].status === "fulfilled" ? (selection ? "ok" : "failed") : "failed",
+        selector: settled[0].status === "fulfilled" ? (audit ? "ok" : "failed") : "failed",
         labReview: settled[1].status === "fulfilled" ? (labReview ? "ok" : "failed") : "failed",
         narrative: settled[2].status === "fulfilled" ? (labNarrative ? "ok" : "failed") : "failed",
       });
       setCallNotes({
         selector: {
-          taken: selection
+          taken: audit
             ? [
-                `優先序 ${selection.priorities.length} 項，其中 ${
-                  selection.priorities.length - resolvePlan(selection, patientFacts).rejectedPriorities.length
-                } 項在已納入清單中、被採用`,
-                `clinician_notes ${selection.clinician_notes.length} 則、data_concerns ${selection.data_concerns.length} 則：目前一律丟棄，不進任何報告`,
-                `disagreements ${selection.disagreements.length} 則：僅供核對，改不了程式的主題判定`,
+                `需確認事項 ${audit.clinician_notes.length} 則、資料疑慮 ${audit.data_concerns.length} 則：全部進醫師版最後一節`,
+                `disagreements ${audit.disagreements.length} 則：僅供核對，改不了程式的判定`,
               ]
             : [],
-          problems: selection
-            ? [
-                ...(resolvePlan(selection, patientFacts).rejectedPriorities.length
-                  ? [`指定了 ${resolvePlan(selection, patientFacts).rejectedPriorities.length} 個不在納入清單中的模組，已忽略`]
-                  : []),
-                ...(selection.echo &&
-                patientFacts.dcsiTotal.known &&
-                selection.echo.dcsi !== null &&
-                selection.echo.dcsi !== patientFacts.dcsiTotal.value
-                  ? [`回抄的 DCSI（${selection.echo.dcsi}）與輸入不符，可能不是同一位病人`]
-                  : []),
-              ]
+          problems: audit
+            ? (audit.echo &&
+              patientFacts.dcsiTotal.known &&
+              audit.echo.dcsi !== null &&
+              audit.echo.dcsi !== patientFacts.dcsiTotal.value
+                ? [`回抄的 DCSI（${audit.echo.dcsi}）與輸入不符，可能不是同一位病人`]
+                : [])
             : ["回應無法解析，這一站的產出全部不採用"],
         },
         labReview: {
@@ -476,7 +468,7 @@ export default function Home() {
         reportDate: new Date().toISOString().slice(0, 10),
         dataCutoff: patientFacts.dataCutoff.known ? patientFacts.dataCutoff.value : null,
       };
-      const plan = resolvePlan(selection, patientFacts);
+      const plan = resolvePlan(audit, patientFacts);
       setPatientReport(assemblePatientReport(plan, { ...options, labNarrative: labNarrative ?? undefined }));
       setClinicianReport(
         assembleClinicianReport(plan, patientFacts, { ...options, labReview: labReview ?? undefined }),
@@ -485,7 +477,7 @@ export default function Home() {
 
       const found: string[] = [];
       const failed = [
-        selection ? null : "① 模組挑選",
+        audit ? null : "① 資料稽核",
         labReview ? null : "② 檢驗判讀",
         labNarrative ? null : "③ 檢驗敘述",
       ].filter(Boolean) as string[];
@@ -611,8 +603,8 @@ export default function Home() {
       },
       llm(
         "selector",
-        "① 模組挑選",
-        "只回模組代碼與優先序。它改不了上一站的主題判定，寫的任何文字也不會出現在病人版。",
+        "① 資料稽核",
+        "找資料的矛盾與需人工確認之處。它改不了任何程式判定，結果附在醫師版最後一節。",
         selectorInput,
         "rawSelector",
       ),

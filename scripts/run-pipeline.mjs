@@ -25,7 +25,7 @@ import {
   assembleClinicianReport,
   assemblePatientReport,
   decisionsForPrompt,
-  parseModuleSelection,
+  parseDataAudit,
   resolvePlan,
 } from "../app/lib/module-plan.ts";
 import { GUIDELINE_RULES, formatRules, RULES_VERSION } from "../app/lib/guideline-rules.ts";
@@ -70,7 +70,7 @@ for (const name of names) {
     // 輸出檔沒有病人識別碼（刻意的），所以放錯資料夾不會有任何症狀——實測就
     // 發生過兩位病人的輸出對調。判讀器要把年齡與 DCSI 抄回來，這裡核對。
     const candidate = await readFile(path.join(args.selector, id, "C.output.json"), "utf8")
-      .then(parseModuleSelection)
+      .then(parseDataAudit)
       .catch(() => null);
     const echo = candidate?.echo;
     const expected = [

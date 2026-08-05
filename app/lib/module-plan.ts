@@ -218,37 +218,50 @@ export function decideTopics(facts: PatientFacts): TopicDecision[] {
   return decisions;
 }
 
-export const MODULE_SELECTOR_PROMPT = `你是糖尿病衛教報告的輔助判讀器。
+/**
+ * 資料稽核。
+ *
+ * 這一站原本叫「模組挑選」，要模型排出前三優先項。實測五位病人，把它的輸出
+ * 接上與不接上，兩份報告**逐字相同**——因為納入哪些主題由程式依 R／PR 判定，
+ * 優先序改不了任何東西，而真正有價值的 clinician_notes 與 data_concerns
+ * 則被程式直接丟棄。等於每位病人都付了一次呼叫，然後把有用的部分扔掉。
+ *
+ * 它丟掉的東西長這樣（實測輸出）：
+ *   「基本資料標示『慢性腎臟病：否』，但檢驗紀錄顯示 eGFR 最低曾達 22.8，
+ *     資料存在顯著矛盾。」
+ * 那正是我們花了好幾輪才手動發現的矛盾，它每次都抓得到。
+ *
+ * 所以改成專職做資料稽核：拿掉優先序，結果進醫師版。
+ */
+export const DATA_AUDIT_PROMPT = `你是糖尿病照護資料的稽核者，讀者是醫療團隊，不是病人。
 
-重要：哪些併發症主題要納入報告，**已經由程式依 R 與 PR 欄位判定完成**，你不需要也不能改變它。病人可見的衛教正文也全部由程式以已核准的固定文字組合，你寫的任何文字都不會出現在病人版報告中。
+重要：哪些併發症主題要納入報告、個別化目標與追蹤間隔，**全部已由程式依 R／PR 與指引門檻表判定完成**，你不需要也不能改變。病人可見的衛教正文也由程式以已核准的固定文字組合，你寫的任何文字都不會出現在病人版。
 
-你只負責三件規則做不到的事：
+你只做兩件規則做不到的事：
 
-1. 排出這位病人最該優先處理的前三項，並說明理由。可以從程式已納入的模組中挑選。
-2. 指出資料中需要醫療團隊注意的地方，例如用藥分類與檢驗結果之間的疑慮、資料明顯矛盾、或缺少關鍵資訊。
-3. 如果你認為程式的主題判定有問題，寫在 disagreements。你的意見會被記錄下來供人工檢視，但不會覆寫程式判定。
+1. **找出資料本身的矛盾與限制**。例如：基本資料的共病旗標與檢驗數值互相矛盾、申報用藥距報告日過久而不能代表目前用藥、關鍵指標完全缺漏、同一項檢驗在不同院所名稱不一致而可能被程式漏抓。
+2. **提醒醫療團隊需要人工確認的地方**。以「請確認什麼」的句型寫，不要下結論。
+
+如果你認為程式的主題判定有問題，寫在 disagreements。意見會記錄下來供人工檢視，但不會覆寫程式判定——這個管道曾經抓到程式把缺值當成 0 的真實錯誤。
 
 限制：
 - 不得推測資料沒有的診斷、檢驗、日期或目前用藥。
 - 申報用藥只代表曾有申報紀錄，不得當成目前正在使用。
 - 不得提出停藥、加藥、換藥或調整劑量的建議。
-- 來源未出現的欄位不得視為 0。
+- 每一則都要能指回輸入中的具體欄位或數值，不要寫泛泛的注意事項。
 
 輸出格式：只輸出一個 JSON 物件，不要加說明文字或程式碼圍籬。
 
 {
   "echo": { "age_years": 輸入中的年齡數字, "dcsi": 輸入中的 DCSI 總分（沒有就填 null） },
-  "priorities": [
-    { "module_id": "已納入的模組代碼", "why": "為什麼這位病人該優先處理這一項" }
-  ],
-  "clinician_notes": ["給醫療團隊的提醒，每則 80 字以內"],
-  "data_concerns": ["資料品質或矛盾之處"],
+  "clinician_notes": ["需要醫療團隊確認的事，每則 80 字以內"],
+  "data_concerns": ["資料本身的矛盾或限制，每則 80 字以內"],
   "disagreements": [
     { "topic": "R3", "program_decision": "程式的判定", "your_view": "你的看法與理由" }
   ]
 }`;
 
-export type SelectorOutput = {
+export type DataAudit = {
   /**
    * 輸入中的年齡與 DCSI，由判讀器抄回來。
    *
@@ -257,13 +270,12 @@ export type SelectorOutput = {
    * 讀出「病程 1.6 年」對不上才發現的。抄回兩個數字就能自動核對。
    */
   echo: { ageYears: number | null; dcsi: number | null } | null;
-  priorities: Array<{ module_id: string; why: string }>;
   clinician_notes: string[];
   data_concerns: string[];
   disagreements: Array<{ topic: string; program_decision: string; your_view: string }>;
 };
 
-export function parseModuleSelection(raw: string): SelectorOutput {
+export function parseDataAudit(raw: string): DataAudit {
   const trimmed = raw.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidate = fenced ? fenced[1].trim() : trimmed;
@@ -288,10 +300,6 @@ export function parseModuleSelection(raw: string): SelectorOutput {
 
   return {
     echo: echoRaw ? { ageYears: num(echoRaw.age_years), dcsi: num(echoRaw.dcsi) } : null,
-    priorities: (Array.isArray(record.priorities) ? record.priorities : [])
-      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-      .map((item) => ({ module_id: String(item.module_id ?? "").trim(), why: String(item.why ?? "").trim() }))
-      .filter((item) => item.module_id),
     clinician_notes: strings(record.clinician_notes),
     data_concerns: strings(record.data_concerns),
     disagreements: (Array.isArray(record.disagreements) ? record.disagreements : [])
@@ -318,9 +326,9 @@ export type ResolvedPlan = {
   /** 病人版最終順序（含 BASE 與類型提醒） */
   patientModuleIds: string[];
   targets: ResolvedPlanTargets;
-  selection: SelectorOutput | null;
+  /** 資料稽核的結果；沒跑或解析失敗時為 null。 */
+  audit: DataAudit | null;
   /** LLM 指定但不在已納入清單中的優先項，已被忽略 */
-  rejectedPriorities: string[];
   /** 病人版可讀的檢驗數值敘述（不含時序宣稱、不含筆數） */
   labNotes: string[];
   /** 醫師版：含筆數與結果種類數 */
@@ -354,7 +362,7 @@ export type ResolvedPlan = {
   unevaluatedNumericItems: number;
 };
 
-export function resolvePlan(selection: SelectorOutput | null, facts: PatientFacts): ResolvedPlan {
+export function resolvePlan(audit: DataAudit | null, facts: PatientFacts): ResolvedPlan {
   const decisions = decideTopics(facts);
 
   const established = decisions
@@ -403,17 +411,6 @@ export function resolvePlan(selection: SelectorOutput | null, facts: PatientFact
   // 計數只有一個來源：主題判定。低血糖模組要看實測值，所以檢驗判定必須先跑。
   const lowestGlucose = lowestMeasuredGlucose(labFindings);
   const selfCare = selectSelfCareModules(facts, established.length, lowestGlucose);
-
-  // 簡短提醒的主題雖然沒有展開完整模組，仍然出現在報告中，因此也算有效的優先項。
-  const includedIds = new Set([
-    ...patientModuleIds,
-    ...selfCare.moduleIds,
-    ...moderate.map((item) => item.moduleId),
-  ]);
-  const rejectedPriorities = (selection?.priorities ?? [])
-    .map((item) => item.module_id)
-    .filter((id) => !includedIds.has(id));
-
 
   // 共同照護區塊：由選到的主題決定，整份報告各出現一次。
   const needed = new Set<string>();
@@ -491,8 +488,7 @@ export function resolvePlan(selection: SelectorOutput | null, facts: PatientFact
     medicationIngredients: facts.medicationIngredients,
     patientModuleIds,
     targets: resolveTargets(facts, established.length),
-    selection,
-    rejectedPriorities,
+    audit,
     // 已經嵌進器官段落的就不在文末摘要重複一次。
     labNotes: labFindings.filter((f) => !inlined.has(f.analyte)).map(describeRange),
     labNotesForClinician: labFindings.map(describeRangeForClinician),
@@ -972,7 +968,7 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
 
   // 只保留病人特有的安全提示。申報資料的通則性限制（檢驗只有費用年月、申報用藥
   // 不等於目前用藥等）刻意不列——那些每份報告都一樣，醫師本來就知道，列了只是雜訊。
-  const disagreements = plan.selection?.disagreements ?? [];
+  const disagreements = plan.audit?.disagreements ?? [];
   const offTarget = outOfTargetOnly(plan.targetComparisons);
   if (plan.targets.safetyFlags.length || plan.labThresholds.length || offTarget.length || disagreements.length) {
     lines.push(section("需核實的檢驗結果"));
@@ -1009,11 +1005,30 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
     }
     rows.sort((a, b) => RANK[a.severity] - RANK[b.severity]);
     for (const row of rows) lines.push(`  [${SEVERITY_LABEL[row.severity]}] ${row.text}`);
-    // 輔助判讀器對程式判定的異議很少出現；一旦出現就是需要人看的訊號。
+    // 稽核對程式判定的異議很少出現；一旦出現就是需要人看的訊號。
     for (const item of disagreements) {
       lines.push(`  [異議] ${item.topic}｜程式：${item.program_decision}`);
       lines.push(`    LLM：${item.your_view}`);
     }
+    lines.push("");
+  }
+
+  /*
+   * 資料稽核的結果。
+   *
+   * 先前這一整段被程式丟棄——付了一次呼叫的錢，然後把它抓到的東西扔掉。
+   * 它實測抓得到「基本資料標示慢性腎臟病：否，但 eGFR 最低曾達 22.8」這種
+   * 我們花了好幾輪才手動發現的矛盾。
+   *
+   * 放在最後：這些是需要人工判斷的線索，不是可以直接照做的結論，
+   * 排在程式判定之前會喧賓奪主。
+   */
+  const auditNotes = plan.audit?.clinician_notes ?? [];
+  const auditConcerns = plan.audit?.data_concerns ?? [];
+  if (auditNotes.length || auditConcerns.length) {
+    lines.push(section("資料稽核（由模型提出，未經程式驗證）"));
+    for (const note of auditNotes) lines.push(`  [請確認] ${note}`);
+    for (const concern of auditConcerns) lines.push(`  [資料疑慮] ${concern}`);
     lines.push("");
   }
 

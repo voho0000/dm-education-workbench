@@ -31,7 +31,7 @@ export const FLOW_NODES: FlowNode[] = [
   // 原始 JSON 不會直接餵給模型：程式先整理成好讀文字，②③ 讀的是這一份。
   // 先前圖上沒有這一格，等於把「模型看到的到底是什麼」漏掉了。
   { id: "llmText", x: 508, y: 112, title: "LLM 好讀文字", sub: "程式整理 · 不改數值", tone: "flowNeutral" },
-  { id: "selector", x: 16, y: 208, title: "① 模組挑選", sub: "只回代碼與優先序", tone: "flowLlm" },
+  { id: "selector", x: 16, y: 208, title: "① 資料稽核", sub: "找矛盾 · 進醫師版", tone: "flowLlm" },
   { id: "labReview", x: 262, y: 208, title: "② 檢驗判讀", sub: "讀原始紀錄", tone: "flowLlm" },
   { id: "narrative", x: 508, y: 208, title: "③ 檢驗敘述", sub: "寫成病人看的段落", tone: "flowLlm" },
   { id: "assemble", x: 262, y: 304, title: "驗證與組裝", sub: "數值比對 · 禁止事項", tone: "flowNeutral" },
