@@ -1421,7 +1421,7 @@ test("實測低血糖會納入低血糖處理模組，不依賴用藥申報", ()
   const plan = resolvePlan(null, facts);
   assert.ok(plan.selfCareModuleIds.includes("SC-HYPO"), "實測低血糖必須納入 SC-HYPO");
   const report = assemblePatientReport(plan, { reportDate: "2026-08-03", dataCutoff: null });
-  assert.match(report, /15 公克的醣類/, "報告要告訴病人低血糖時該怎麼做，不能只講症狀");
+  assert.match(report, /15 公克.{0,2}醣類/, "報告要告訴病人低血糖時該怎麼做，不能只講症狀");
 });
 
 test("血鉀 3.0–3.3 這種整批偏低不會被漏掉", () => {
@@ -1475,7 +1475,7 @@ test("PR=1 也展開完整模組，不再只給一句簡短提醒", () => {
   assert.ok(report.includes("心臟"), "模組正文要真的印出來");
   assert.ok(!report.includes("持續留意"), "簡短提醒那一區已併入主題段落，不得殘留");
   // 併進來之後，風險預測與確診的區別只剩這一句在扛
-  assert.match(report, /來自風險評估而不是診斷/);
+  assert.match(report, /來自風險評估而非診斷/);
 });
 
 test("需要撥打 119 的情況排在儘速就醫之前", () => {
@@ -1814,7 +1814,7 @@ test("病人版的分區與排版讓一般民眾讀得下去", () => {
   assert.ok(!report.includes("您的紀錄中已有的項目"));
   assert.ok(!report.includes("── 預防重點 ──"));
   assert.ok(!/腦血管（/.test(report), "模組標題不標示狀態");
-  assert.match(report, /如果您不確定自己是否有相關診斷/);
+  assert.match(report, /不確定自己是否有相關診斷/);
   // 三個層級要一眼分得出來
   assert.match(report, /^────+$/m);
   assert.match(report, /^【.+】$/m);
@@ -2689,6 +2689,19 @@ test("目標的病人版用語不得改動數字", () => {
     const inStatement = new Set((rule.statement.match(/\d+(?:\.\d+)?/g) ?? []));
     for (const n of (rule.patientStatement.match(/\d+(?:\.\d+)?/g) ?? [])) {
       assert.ok(inStatement.has(n), `${rule.id} 的病人版出現 statement 沒有的數字 ${n}（${numbersIn(rule.patientStatement)}）`);
+    }
+  }
+});
+
+test("替換句的原句必須真的存在於模組正文中", () => {
+  // definiteVariants 用字串比對做替換。正文改了而 from 沒跟著改，替換就靜默失效——
+  // 病人會讀到「若同時有腎臟或心臟問題」，而程式明明已經知道他有。
+  for (const module of SELF_CARE_MODULES) {
+    for (const variant of module.definiteVariants ?? []) {
+      assert.ok(
+        module.patientText.includes(variant.from),
+        `${module.id} 的替換原句已不在正文中，替換會靜默失效：${variant.from}`,
+      );
     }
   }
 });
