@@ -2882,3 +2882,36 @@ test("模型已把單位寫進數值時不再接第二次", () => {
   assert.doesNotMatch(report, /mg\/dL\s+mg\/dL/, "單位不得重複");
   assert.match(report, /104 mg\/dL/);
 });
+
+test("名稱與醫令碼衝突時以名稱為準：09005C 但寫「飯後血糖」算餐後", () => {
+  /*
+   * 真實遇過的資料：醫令開 09005C（健保的空腹血糖），但結果列的名稱與數值是
+   * 「飯後血糖 102」。名稱才是這一筆實際量的東西。
+   *
+   * 這跟「忠實搬運」型的轉檔工具（相信申報碼、不重新詮釋）結論相反，因為
+   * 用途不同：我們要拿這個值去比對「空腹血糖 80–130」的目標，貼錯標籤就是
+   * 對病人講錯話。轉檔工具只負責搬，詮釋留給下游。
+   *
+   * 正確行為靠兩個隱含前提，兩個都容易被「順手優化」破壞，所以在這裡釘住：
+   *   1. MATCHERS 陣列中，靠名稱判定的空腹／餐後排在靠醫令判定的未標示之前
+   *   2. 空腹那條**不得**加上 includeOrderCodes: 09005C
+   */
+  const one = (name, code) =>
+    extractLabFindings(
+      extractPatientFacts({
+        userInput: { REPORT_DATE: "2026-08-03" },
+        rawSources: {
+          labData: {
+            rObject: [{ fee_ym: "202512", order_code: code, assay_item_name: name, assay_value: "102", unit_data: "mg/dL" }],
+          },
+        },
+      }),
+    )[0]?.analyte ?? null;
+
+  assert.equal(one("飯後血糖", "09005C"), "postprandial-glucose", "名稱寫飯後就是飯後，不管醫令開什麼");
+  assert.equal(one("Sugar PC", "09005C"), "postprandial-glucose");
+  assert.equal(one("Glu-AC", "09005C"), "fasting-glucose", "兩者一致時照常判空腹");
+  // 名稱看不出時機時保守處理：不因為醫令是 09005C 就硬套空腹目標
+  assert.equal(one("Sugar", "09005C"), "glucose-unspecified");
+  assert.equal(one("血糖", "09140C"), "glucose-unspecified");
+});
