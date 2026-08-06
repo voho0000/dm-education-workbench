@@ -2336,7 +2336,7 @@ test("病人版檢驗敘述：數值逐一比對來源，禁止事項會被標�
   assert.equal(dirty.unverifiedValues.length, 1, "999 不在來源中");
   assert.deepEqual(dirty.uncitedNumbers, ["4.2"], "文中出現但沒列進引用清單");
   assert.ok(dirty.bannedPhrases.includes("聲稱時序或趨勢"));
-  assert.ok(dirty.bannedPhrases.includes("處置建議"));
+  assert.ok(dirty.bannedPhrases.includes("處置或劑量建議"));
 
   const rendered = formatLabNarrative(dirty).join("\n");
   assert.match(rendered, /⚠ 這一段未通過自動檢查/);
@@ -4180,7 +4180,7 @@ test("醫師版的每一段自由文字都要掃到，不只是異常項目的�
 
   const labels = new Set(check.unsupportedClaims.map((item) => item.label));
   assert.ok(labels.has("推測診斷"), "why 與 pattern 都要掃");
-  assert.ok(labels.has("以變化或穩定度描述數值"), "worth_a_look 也要掃");
+  assert.ok(labels.has("以變化或穩定度描述數值（資料沒有採檢日期，判定不了先後）"), "worth_a_look 也要掃");
   assert.ok(labels.has("處置或劑量建議"), "data_quality_notes 也要掃");
 
   // 標記要出現在醫師版那一節的開頭，不是附在最後——醫師是由上往下讀的

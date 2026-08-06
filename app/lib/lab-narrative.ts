@@ -21,6 +21,7 @@ import { GUIDELINE_RULES } from "./guideline-rules.ts";
 import { extractLabFindings, missingCoreAnalytes } from "./lab-findings.ts";
 import { labSectionOf } from "./lab-llm.ts";
 import type { PatientFacts } from "./patient-facts.ts";
+import { claimLabels, findUnsupportedClaims } from "./unsupported-claims.ts";
 
 export const LAB_NARRATIVE_PROMPT = `你要為一位糖尿病人寫「檢驗數值」這一段衛教內容，讀者是病人本人，不是醫療人員。
 
@@ -130,56 +131,6 @@ export type LabNarrativeCheck = {
   /** 宣稱達到「需醫療團隊定案」目標的句子 */
   claimedTargets: string[];
 };
-
-/**
- * 禁止事項的偵測樣式。
- *
- * 刻意只抓「明確違規」而不抓「可能違規」——誤報會讓標記失去意義，
- * 而這個標記的用途是告訴人「這幾句不可信」，必須夠準才有人看。
- */
-const BANNED = [
-  {
-    /*
-     * 「趨勢」單獨一個詞太寬。實測擋下了「糖化血色素能反映長期血糖趨勢」——
-     * 那是在說這個指標是什麼，沒有對這位病人主張任何時序。
-     *
-     * 這個標記的用途是告訴人「這幾句不可信」，誤報會讓它失去意義（見上方註解），
-     * 所以改成要求真的有時序主張的動詞。
-     */
-    pattern: /最近一次|最新一筆|目前的?數值為|已(改善|惡化)|持續(上升|下降|惡化)|趨勢(顯示|為|是|向)|(呈|有|出現).{0,4}趨勢/,
-    label: "聲稱時序或趨勢",
-  },
-  {
-    /*
-     * 描述「變化」也是時序主張。
-     *
-     * 實測五份報告全部出現「血糖波動較大」「起伏較大」「控制相對穩定」——
-     * 這些字都在講值隨時間怎麼變，而申報資料沒有採檢日期，根本不知道那些值
-     * 的先後。可以說的是「紀錄中的範圍是 65–500」，不能說「波動大」。
-     *
-     * 這一條與上面那條分開，因為它抓的是不同的錯：上面是明說時間點
-     * （最近一次），這裡是用變化的詞暗示時間順序。
-     */
-    // 必須指向數據才算。「吃得穩定」「讓份量與時間穩定下來」講的是行為，
-    // 不是數值隨時間怎麼變——把那些也擋下來，這個標記就會變成雜訊。
-    pattern:
-      /(血糖|血壓|數值|指標|指數|檢驗|結果|控制|腎功能|糖化血色素|HbA1c)[^。\n]{0,12}(波動|起伏|忽高忽低|時高時低|不穩|變異較?大|(急速|快速|明顯)(變化|上升|下降)|(相對|尚算|大致|整體)?(平)?穩定)|(波動|起伏)[^。\n]{0,8}(較大|很大|明顯|劇烈)/,
-    label: "以變化或穩定度描述數值（資料沒有採檢日期，判定不了先後）",
-  },
-  { pattern: /建議(您)?(開始|停用|停止|加|減|換|調整).{0,6}(藥|劑量|治療)|應(停用|加藥|減量)/, label: "處置建議" },
-  {
-    /*
-     * 自我血糖監測的頻率是臨床決定，指引對它有建議。實測模型寫出
-     * 「請於每日早餐前及三餐後固定時間量測血糖」——那是它自己訂的處方。
-     *
-     * 「請與醫療團隊確認監測頻率」不算違規，所以樣式要求出現具體的頻率詞。
-     */
-    pattern:
-      /(每日|每天|一天|每週)[^。\n]{0,12}(量測|測量|監測|記錄|驗)[^。\n]{0,10}血糖|血糖[^。\n]{0,8}(每日|每天|一天)[^。\n]{0,6}(\d|[一二三四五六七八九])\s*(次|回)/,
-    label: "自訂血糖監測頻率",
-  },
-  { pattern: /(診斷為|確診為|罹患了|您(有|患有)).{0,10}(症|病變|症候群)/, label: "推測診斷" },
-];
 
 /**
  * 文中允許出現、不必列入 cited_values 的數字（分級、電話、單位常數等）。
@@ -370,7 +321,15 @@ export function parseLabNarrative(
     ),
   ];
 
-  const bannedPhrases = BANNED.filter((rule) => rule.pattern.test(allText)).map((rule) => rule.label);
+  /*
+   * 用共用的樣式，不要在這裡另外維護一份。
+   *
+   * 先前兩邊各有一份：病人版補了「波動／穩定」與「自訂監測頻率」，醫師版
+   * 沒補，而同一個模型在兩邊寫出同一類句子。共用之後病人版也一併拿到
+   * 「推測診斷」「推論急症風險」這幾類——那些原本只有醫師版在擋。
+   */
+  const claims = findUnsupportedClaims(allText, "patient");
+  const bannedPhrases = claimLabels(claims);
 
   const foundAfterAll = (Array.isArray(record.found_after_all) ? record.found_after_all : [])
     .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
