@@ -3690,17 +3690,29 @@ test("用「波動」「穩定」描述數值算違規，講行為不算", () =>
   }
 });
 
-test("模型不得自訂血糖監測頻率", () => {
-  // 每天量幾次、什麼時候量是臨床決定，指引對它有建議。實測模型寫出
-  // 「請於每日早餐前及三餐後固定時間量測血糖」——那是它自己開的處方。
+test("「每天量血糖」是合理衛教，刻意不擋", () => {
+  /*
+   * 這一條曾經是禁止事項。拿掉的理由：「建議每天量血糖並記錄」是糖尿病衛教
+   * 的標準建議，報告被拿出來檢視時不會有人質疑；擋下它只是讓一份可用的報告
+   * 過不了關。
+   *
+   * 真正該擋的是劑量或用藥處方（幾單位胰島素、加減哪一種藥），那些由
+   * 「處置或劑量建議」涵蓋，與監測頻率不是同一類。
+   */
   const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-06" }, rawSources: {} });
   const banned = (text) =>
     parseLabNarrative(JSON.stringify({ narrative: text, cited_values: [] }), facts).bannedPhrases;
 
-  assert.ok(banned("請於每日早餐前及三餐後固定時間量測血糖並記錄").includes("自訂血糖監測頻率"));
-  assert.ok(banned("建議每日固定記錄空腹與餐後血糖").includes("自訂血糖監測頻率"));
-  // 把頻率交回醫療團隊就不算
-  assert.deepEqual(banned("請與醫療團隊確認適合您的血糖監測頻率"), []);
+  for (const text of [
+    "請於每日早餐前及三餐後固定時間量測血糖並記錄",
+    "建議每日固定記錄空腹與餐後血糖",
+    "請與醫療團隊確認適合您的血糖監測頻率",
+  ]) {
+    assert.deepEqual(banned(text), [], `不該擋：${text}`);
+  }
+
+  // 但劑量與用藥處方仍要擋
+  assert.ok(banned("建議您調整藥物劑量").includes("處置或劑量建議"));
 });
 
 test("檢驗過濾要認得實際資料用的縮寫，且不得誤濾核心指標", () => {
@@ -3830,7 +3842,7 @@ test("可發布度：硬性問題直接歸零，程度問題才扣分", () => {
   };
   const facts = extractPatientFacts(raw);
   const plan = resolvePlan(null, facts);
-  const narrative = { ...SECTIONS, foundAfterAll: [], unverifiedValues: [], uncitedNumbers: [], bannedPhrases: [] };
+  const narrative = { ...SECTIONS, foundAfterAll: [], unverifiedValues: [], uncitedNumbers: [], bannedPhrases: [], claimedTargets: [] };
   // 用同一份來源產生比對文字，否則 8.6 追溯不到、numbers-supported 會失敗
   const patientText = formatPatientJson(raw);
   const report = assemblePatientReport(plan, { reportDate: "2026-08-06", dataCutoff: null, labNarrative: narrative });
@@ -3841,14 +3853,17 @@ test("可發布度：硬性問題直接歸零，程度問題才扣分", () => {
     return assessPublishReadiness({ facts, plan, validation, labNarrative, reportReview, caseReview, llmRequested: false });
   };
 
-  // 審查器標了 blocking：直接歸零，不管其他項目多好
-  const blocked = assess(narrative, {
+  /*
+   * 審查器標 blocking 扣分但不歸零。那一層是 LLM 判的、本身沒有校準過，
+   * 不該獨自決定一份報告的生死——扣 40 分足以讓需要看的浮上來。
+   */
+  const flagged = assess(narrative, {
     findings: [{ quote: SECTIONS.midTerm, category: "treatment-advice", reason: "測試", severity: "blocking" }],
     hallucinatedQuotes: [],
     openEndedUsed: true,
   });
-  assert.equal(blocked.score, 0);
-  assert.equal(blocked.band, "blocked");
+  assert.ok(flagged.score > 0 && flagged.score < 100, `應扣分而非歸零：${flagged.score}`);
+  assert.equal(flagged.band, "review");
 
   // 編造引用同樣歸零——那是「這次審查不可信」，不是「報告沒問題」
   const untrusted = assess(narrative, { findings: [], hallucinatedQuotes: ["不存在的句子"], openEndedUsed: true });
@@ -4156,9 +4171,9 @@ test("醫師版的推論不因為讀者是專業人員就放行", () => {
     assert.deepEqual(findUnsupportedClaims(text, "clinician"), [], `不該標記：${text}`);
   }
 
-  // 血糖監測頻率只對病人版適用——寫給醫師是建議事項，由他判斷
+  // 監測頻率兩邊都不擋——那是合理的衛教建議，不是處方
   const smbg = "建議每日固定記錄空腹與餐後血糖";
-  assert.ok(findUnsupportedClaims(smbg, "patient").length > 0);
+  assert.deepEqual(findUnsupportedClaims(smbg, "patient"), []);
   assert.deepEqual(findUnsupportedClaims(smbg, "clinician"), []);
 });
 

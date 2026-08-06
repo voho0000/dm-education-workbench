@@ -69,13 +69,26 @@ export type ReadinessInput = {
  * 一份寫著不存在數值的報告，不會因為其他項目都很好就變得可以發。
  * **資料完整度**才是扣分制，因為那些是程度問題。
  */
+/*
+ * 歸零的門檻刻意設得窄。
+ *
+ * 判準是「這句話被拿出來會不會站不住腳」，不是「寫得完不完美」。留在這裡的
+ * 五項都是同一類：報告陳述了一件不成立的事，或我們根本不知道它成不成立。
+ *   數值不存在於來源、推論資料支持不了、該有的段落沒有、
+ *   兩位病人的輸出對調、審查器對著不存在的內容發表意見
+ *
+ * 移出去的兩項與它們不同：
+ *   宣稱達到未定案的目標——「HbA1c 6.1 % 控制良好」用任何一條線看都對，
+ *     不精確的只是「達標」這個詞在目標未定案時不夠嚴謹。
+ *   ④ 審查器判的 blocking——那一層是 LLM，本身沒有校準過，不該獨自
+ *     決定一份報告的生死。它扣分夠重（40），足以讓需要看的浮上來。
+ */
 const HARD_ZERO = new Set([
   "validation-failed",
   "unverified-values",
   "banned-phrases",
   "echo-mismatch",
   "narrative-call-failed",
-  "review-blocking",
   "review-hallucinated",
 ]);
 
@@ -120,9 +133,18 @@ export function assessPublishReadiness(input: ReadinessInput): PublishReadiness 
   if (blockingFindings.length) {
     add(
       "review-blocking",
-      100,
-      `審查器標記 ${blockingFindings.length} 處會讓病人做出錯誤決定的內容`,
-      "逐句看審查器的標記，確認後修正或重跑。",
+      40,
+      `審查器標記 ${blockingFindings.length} 處嚴重問題`,
+      "逐句看審查器的標記。這一層是 LLM 判的、沒有校準過，所以它扣分但不獨自決定能不能發。",
+    );
+  }
+
+  if (labNarrative?.claimedTargets?.length) {
+    add(
+      "claimed-undetermined-target",
+      15,
+      `宣稱達到尚未定案的目標 ${labNarrative.claimedTargets?.length ?? 0} 處`,
+      "數值本身沒錯，但這位病人的目標還沒由醫療團隊定案，用「達標」不夠嚴謹。改成只陳述數字即可。",
     );
   }
 
