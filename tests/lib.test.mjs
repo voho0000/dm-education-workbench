@@ -27,7 +27,7 @@ import {
   selectSelfCareModules,
 } from "../app/lib/self-care-modules.ts";
 import { resolveTargets } from "../app/lib/resolve-targets.ts";
-import { GUIDELINE_RULES, GUIDELINE_SOURCES, RULES_APPROVED, RULES_BY_ID, RULES_VERSION, citationText, rulesForType } from "../app/lib/guideline-rules.ts";
+import { GUIDELINE_RULES, GUIDELINE_SOURCES, RULES_APPROVED, RULES_BY_ID, RULES_VERSION, citationShort, citationText, rulesForType } from "../app/lib/guideline-rules.ts";
 import { compareToTargets } from "../app/lib/target-comparison.ts";
 import {
   BEHAVIOR_LABEL,
@@ -2077,7 +2077,7 @@ test("eGFR 低於 30 給的是指引的轉介建議，不是含糊的「依腎�
   const referral = stage4.find((h) => h.code === "referral-nephrology");
   assert.ok(referral, "eGFR 低於 30 應給轉介建議");
   assert.match(referral.clinicianMessage, /建議轉介腎臟專科醫師/);
-  assert.match(referral.citation, /p\. ?200|第 200 頁/);
+  assert.match(referral.citation, /p\. ?199|第 199 頁/);
   // 加密追蹤仍要出現，否則排程表沒有腎臟那一列
   assert.ok(stage4.some((h) => h.code === "kidney-intensive-followup"));
 
@@ -3189,4 +3189,58 @@ test("兩份指引的出處都要能認出是哪一本", () => {
   assert.ok(forT2.has("ppg-general") && !forT1.has("ppg-general"));
   // 型別未知走第 2 型那一套
   assert.deepEqual([...forT2].sort(), rulesForType("absent").map((rule) => rule.id).sort());
+});
+
+test("出處頁次是逐頁核過的，改動必須是刻意的", () => {
+  /*
+   * 2026-08-06 對著學會網站的兩個 PDF 逐頁核過：
+   *   t2-2022  /DB/book/88/11103指引_v6-2_all(內文).pdf  418 頁
+   *   t1-2022  /DB/book/89/20220923-final-保全.pdf        362 頁
+   * 核之前有九組頁次是錯的（表九實際在 p.18 不是 19、血脂表一在 153 不是 154、
+   * 高齡目標是表七 p.13 不是表二 p.72……），醫師跳過去會落在隔壁章。
+   * 指引全文不進 repo，所以這裡用快照擋住回歸——數字要改，得先重新核頁。
+   */
+  const expected = {
+    "hba1c-general": "表六 非懷孕成年人糖尿病的治療目標，p.12",
+    "fpg-general": "第九章 第 2 型糖尿病的血糖治療目標，p.71",
+    "ppg-general": "第九章 第 2 型糖尿病的血糖治療目標，p.71",
+    "hba1c-elderly-intermediate": "表七 老年糖尿病人（≥65 歲）的治療目標，p.13",
+    "hypoglycemia-levels": "表一 低血糖分級，p.141",
+    "interval-hba1c": "表九 臨床監測項目與建議頻率，p.18",
+    "albuminuria-diagnosis": "表九 註 2，p.18",
+    "ldl-general": "表一 血脂的目標建議，p.153",
+    "bp-target-general": "第十四章 心血管併發症與其危險因子的處理，p.146",
+    "metformin-egfr-30": "第十一章 口服抗糖尿病藥物（臨床建議表），p.97",
+    "screening-adult": "第五章 糖尿病人的篩檢，p.49",
+    "t1-hba1c-general": "第1型指引，第五章 血糖治療目標（臨床建議表），p.67",
+    "t1-ppg-adult": "第1型指引，第五章 血糖治療目標，p.70",
+    "t1-interval-kidney": "第1型指引，第十章 糖尿病腎臟疾病，p.198",
+    "t1-interval-eye": "第1型指引，第十章 視網膜病變，p.186",
+  };
+  for (const [id, want] of Object.entries(expected)) {
+    const rule = RULES_BY_ID.get(id);
+    assert.ok(rule, `規則不存在：${id}`);
+    assert.equal(citationShort(rule), want, `${id} 的出處與核過的頁次不符`);
+  }
+});
+
+test("有蛋白尿的病人也要套加嚴的血壓目標", () => {
+  // 指引表六寫「高心血管疾病風險及蛋白尿患者 <130/80」。原本只看已發生的
+  // 心血管／腦血管疾病，於是只有蛋白尿的病人拿到 140/90——而加嚴血壓
+  // 正是延緩腎病變惡化的手段。
+  const bpOf = (raw) => resolveTargets(extractPatientFacts(raw), 0).targets.find((item) => item.metric === "血壓");
+
+  const proteinuria = bpOf({
+    userInput: { REPORT_DATE: "2026-08-06" },
+    rawSources: {
+      labData: {
+        rObject: [{ order_code: "12021C", assay_item_name: "Albumin/Creatinine Ratio", assay_value: "450", unit_data: "mg/g", fee_ym: "11406" }],
+      },
+    },
+  });
+  assert.match(proteinuria.value, /130\/80/);
+  assert.match(proteinuria.reason, /蛋白尿/);
+
+  const neither = bpOf({ userInput: { REPORT_DATE: "2026-08-06" }, rawSources: {} });
+  assert.match(neither.value, /140\/90/);
 });

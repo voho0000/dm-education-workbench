@@ -7,6 +7,7 @@
  */
 
 import { GUIDELINE_RULES, RULES_BY_ID, citationText, type GuidelineRule } from "./guideline-rules.ts";
+import { kidneyLabEvidence } from "./lab-findings.ts";
 import type { PatientFacts } from "./patient-facts.ts";
 
 export type ResolvedTarget = {
@@ -124,12 +125,22 @@ export function resolveTargets(
   }
 
   // ── 血壓 ──
-  if (hasCardiovascular || hasCerebrovascular) {
+  /*
+   * 指引表六寫的是「高心血管疾病風險**及蛋白尿**患者 <130/80」。
+   * 原本只看已發生的心血管／腦血管疾病，於是一位只有蛋白尿的病人會拿到
+   * 一般目標 140/90——而加嚴血壓正是延緩腎病變惡化的手段。
+   */
+  const hasProteinuria = hasKidney || kidneyLabEvidence(facts).triggered;
+  const intensiveBp = hasCardiovascular || hasCerebrovascular || hasProteinuria;
+  const bpReason = hasCardiovascular || hasCerebrovascular
+    ? `資料顯示已有${hasCardiovascular ? "心血管" : ""}${hasCardiovascular && hasCerebrovascular ? "與" : ""}${hasCerebrovascular ? "腦血管" : ""}疾病，屬可考慮加嚴的族群；是否可耐受需醫療團隊評估。`
+    : "資料顯示有腎臟問題或蛋白尿，指引對這一族群建議加嚴血壓目標；是否可耐受需醫療團隊評估。";
+  if (intensiveBp) {
     targets.push(
       target(
         "血壓",
         t("t1-bp-target-intensive", "bp-target-intensive"),
-        `資料顯示已有${hasCardiovascular ? "心血管" : ""}${hasCardiovascular && hasCerebrovascular ? "與" : ""}${hasCerebrovascular ? "腦血管" : ""}疾病，屬可考慮加嚴的族群；是否可耐受需醫療團隊評估。`,
+        bpReason,
         true,
       ),
     );
@@ -143,7 +154,7 @@ export function resolveTargets(
       });
     }
   } else {
-    targets.push(target("血壓", t("t1-bp-target-general", "bp-target-general"), "未見已發生的心血管或腦血管疾病，套用一般目標"));
+    targets.push(target("血壓", t("t1-bp-target-general", "bp-target-general"), "未見已發生的心血管或腦血管疾病，也未見腎臟問題或蛋白尿，套用一般目標"));
   }
 
   // ── 血脂 ──
