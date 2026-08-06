@@ -446,7 +446,12 @@ export default function Home() {
 
       const audit = attempt(textOf(0), parseDataAudit);
       const labReview = attempt(textOf(1), (raw) => parseLabReview(raw, patientFacts));
-      const labNarrative = attempt(textOf(2), (raw) => parseLabNarrative(raw, patientFacts));
+      // 未定案的目標要傳進去，否則擋不掉「符合控制目標」——那一層不知道
+      // resolveTargets 的結果，而目標是否定案只有那裡知道。
+      const undeterminedMetrics = (preview?.targets.targets ?? [])
+        .filter((item) => item.needsClinicianConfirmation || !item.value)
+        .map((item) => item.metric);
+      const labNarrative = attempt(textOf(2), (raw) => parseLabNarrative(raw, patientFacts, undeterminedMetrics));
 
       setCallState({
         selector: settled[0].status === "fulfilled" ? (audit ? "ok" : "failed") : "failed",

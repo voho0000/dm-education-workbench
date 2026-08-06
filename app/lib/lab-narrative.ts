@@ -127,6 +127,8 @@ export type LabNarrativeCheck = {
   uncitedNumbers: string[];
   /** 踩到禁止事項的句子 */
   bannedPhrases: string[];
+  /** 宣稱達到「需醫療團隊定案」目標的句子 */
+  claimedTargets: string[];
 };
 
 /**
@@ -221,7 +223,61 @@ function stripBullets(text: string): string {
     .join("\n");
 }
 
-export function parseLabNarrative(raw: string, facts: PatientFacts): LabNarrativeCheck {
+/*
+ * 「宣稱達標」的偵測。
+ *
+ * 程式知道哪些目標還沒定案——高齡者的糖化血色素目標要依健康狀態分級，而申報
+ * 資料判定不了認知功能與預期餘命，所以那一項會標成「需醫療團隊定案」。目標值
+ * 本身沒定，就沒有達不達標可言。
+ *
+ * 實跑四份都出現「糖化血色素 6.1%，符合控制目標」這類句子，機械檢查全部
+ * 放行——因為 6.1 確實在來源裡，格式也沒問題。這是 ④ 報告審查抓到的，
+ * 但它是程式判得動的事，不該只靠 LLM。
+ */
+const MEETS_TARGET = /(符合|達到|已達|落在)[^。\n]{0,8}(控制目標|目標|良好|理想|正常範圍)|已達標|控制良好/;
+
+/*
+ * 指標的別名。程式寫「糖化血色素」，模型可能寫「醣化血紅素」「HbA1c」——
+ * 只認一種寫法，一句「醣化血紅素 6.1%，符合控制目標」就會整句放行。
+ * 這與 ②③ 的醫令名稱配對是同一類問題。
+ */
+const METRIC_ALIASES: ReadonlyArray<readonly string[]> = [
+  ["糖化血色素", "醣化血色素", "糖化血紅素", "醣化血紅素", "HbA1c", "A1C"],
+  ["空腹血糖", "飯前血糖", "餐前血糖", "Glucose AC", "Glu-AC"],
+  ["餐後血糖", "飯後血糖", "Glucose PC", "Glu-PC"],
+  ["低密度脂蛋白膽固醇", "LDL-C", "LDL"],
+  ["高密度脂蛋白膽固醇", "HDL-C", "HDL"],
+  ["三酸甘油酯", "TG", "Triglyceride"],
+  ["血壓", "BP"],
+];
+
+function aliasesOf(metric: string): string[] {
+  const group = METRIC_ALIASES.find((row) => row.some((name) => name.toLowerCase() === metric.toLowerCase()));
+  return group ? [...group] : [metric];
+}
+
+function claimsUndeterminedTarget(text: string, undeterminedMetrics: string[]): string[] {
+  if (!undeterminedMetrics.length) return [];
+  const names = [...new Set(undeterminedMetrics.flatMap(aliasesOf))];
+  const hits: string[] = [];
+  for (const sentence of text.split(/[。\n]/)) {
+    if (!MEETS_TARGET.test(sentence)) continue;
+    if (names.some((name) => sentence.toLowerCase().includes(name.toLowerCase()))) {
+      hits.push(`${sentence.trim()}。`);
+    }
+  }
+  return [...new Set(hits)];
+}
+
+export function parseLabNarrative(
+  raw: string,
+  facts: PatientFacts,
+  /**
+   * 程式判定「需醫療團隊定案」的指標名稱。傳進來才擋得動——這一層不知道
+   * resolveTargets 的結果，而目標是否定案只有那裡知道。
+   */
+  undeterminedMetrics: string[] = [],
+): LabNarrativeCheck {
   const trimmed = raw.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
   const candidate = fenced ? fenced[1].trim() : trimmed;
@@ -310,7 +366,18 @@ export function parseLabNarrative(raw: string, facts: PatientFacts): LabNarrativ
     .map((item) => ({ item: String(item.item ?? "").trim(), as: String(item.as ?? "").trim() }))
     .filter((item) => item.item);
 
-  return { narrative, shortTerm, midTerm, foundAfterAll, unverifiedValues, uncitedNumbers, bannedPhrases };
+  const claimedTargets = claimsUndeterminedTarget(
+    [narrative, shortTerm, midTerm].join("\n"),
+    undeterminedMetrics,
+  );
+
+  return {
+    narrative, shortTerm, midTerm, foundAfterAll, unverifiedValues, uncitedNumbers,
+    bannedPhrases: claimedTargets.length
+      ? [...bannedPhrases, `宣稱達到尚未定案的目標（${undeterminedMetrics.join("、")}）`]
+      : bannedPhrases,
+    claimedTargets,
+  };
 }
 
 /**

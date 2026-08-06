@@ -4022,3 +4022,48 @@ test("病人版敘述的 prompt 不得一邊要求、一邊禁止同一組詞", 
     }
   }
 });
+
+test("不得宣稱達到「需醫療團隊定案」的目標", () => {
+  /*
+   * 高齡者的糖化血色素目標要依健康狀態分級，申報資料判定不了，所以程式標成
+   * 需定案。目標值本身沒定，就沒有達不達標可言。
+   *
+   * 實跑四份都出現「糖化血色素 6.1%，符合控制目標」，機械檢查全部放行——
+   * 6.1 確實在來源裡、格式也沒問題。這是 ④ 報告審查抓到的，但它是程式判得動
+   * 的事，不該只靠 LLM。
+   */
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-06", BIRTHDAY: "1954-01-01" },
+    rawSources: { labData: { rObject: [{ fee_ym: "11406", assay_item_name: "HbA1c", assay_value: "6.1", unit_data: "%" }] } },
+  });
+  const undetermined = resolveTargets(facts, 0)
+    .targets.filter((item) => item.needsClinicianConfirmation || !item.value)
+    .map((item) => item.metric);
+  assert.ok(undetermined.includes("糖化血色素"), "72 歲的糖化血色素目標應為未定案");
+
+  const claimed = (text) =>
+    parseLabNarrative(
+      JSON.stringify({ narrative: text, cited_values: [{ item: "HbA1c", value: "6.1" }] }),
+      facts,
+      undetermined,
+    ).claimedTargets;
+
+  // 別名要一起認：程式寫「糖化血色素」，模型可能寫「醣化血紅素」或 HbA1c
+  for (const text of [
+    "醣化血紅素數值為 6.1 %，符合控制目標。",
+    "糖化血色素 6.1 %，已達標。",
+    "HbA1c 為 6.1 %，控制良好。",
+  ]) {
+    assert.equal(claimed(text).length, 1, `應擋下：${text}`);
+  }
+
+  // 講數值但不宣稱達標，可以
+  assert.deepEqual(claimed("糖化血色素為 6.1 %。實際目標值需由醫療團隊依您的健康狀態定案。"), []);
+  // 目標已定案的指標不受影響
+  assert.deepEqual(claimed("三酸甘油酯 120 mg/dL，符合控制目標。"), []);
+  // 沒有未定案目標時整條不啟動
+  assert.deepEqual(
+    parseLabNarrative(JSON.stringify({ narrative: "糖化血色素 6.1 %，已達標。", cited_values: [] }), facts, []).claimedTargets,
+    [],
+  );
+});
