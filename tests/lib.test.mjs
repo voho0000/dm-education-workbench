@@ -50,7 +50,8 @@ import {
   MODULE_CATALOG_APPROVED,
   MODULE_CATALOG_VERSION,
 } from "../app/lib/education-modules.ts";
-import { parseLabReview, labSectionOf, LAB_REVIEW_PROMPT } from "../app/lib/lab-llm.ts";
+import { parseLabReview, formatLabReview, labSectionOf, LAB_REVIEW_PROMPT } from "../app/lib/lab-llm.ts";
+import { findUnsupportedClaims } from "../app/lib/unsupported-claims.ts";
 import { analyteForItemName, evaluateThresholds, extractLabFindings, kidneyLabEvidence, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
 import { parseLabNarrative, formatLabNarrative, LAB_NARRATIVE_PROMPT } from "../app/lib/lab-narrative.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
@@ -4119,4 +4120,73 @@ test("審查器看得到程式算出的目標與追蹤間隔，才分得出誰�
   assert.match(with_, /程式依指引算出的目標與追蹤間隔/);
   assert.match(with_, /照抄不算自訂處方/);
   assert.match(with_, /每 3 個月測一次 eGFR/);
+});
+
+// ── 醫師版的自由文字也要查臨床語意 ──────────────────────────────
+
+test("醫師版的推論不因為讀者是專業人員就放行", () => {
+  /*
+   * 這一層原本只查「引用的數字存不存在」，所以「符合糖尿病腎病變」
+   * 「腎功能顯著惡化」「尿酮 1+ 推到酮酸中毒風險」全部照樣進報告——
+   * 數字都對，推論不成立。實測五份醫師版有四份出現，共 25 則。
+   *
+   * 讀者專業與否改變的是「要不要解釋」，不是「這句話成不成立」。
+   */
+  const blocked = [
+    "符合糖尿病腎病變的表現",
+    "慢性腎臟病進展中",
+    "腎功能顯著惡化",
+    "血糖劇烈波動",
+    "尿酮 1+，有酮酸中毒風險",
+    "符合慢性腎病相關貧血",
+    "建議關注血糖藥物調整",
+  ];
+  for (const text of blocked) {
+    assert.ok(findUnsupportedClaims(text, "clinician").length > 0, `應標記：${text}`);
+  }
+
+  // 陳述事實、引用指引、明說限制都不算
+  for (const text of [
+    "紀錄中曾出現 eGFR 22.8",
+    "飯前血糖介於 65 至 500 mg/dL",
+    "eGFR 低於 60，依指引建議至少每半年追蹤",
+    "尿酮 1+（無採檢日期，無法判讀當下狀況）",
+    "視網膜病變已納入本次衛教主題",
+  ]) {
+    assert.deepEqual(findUnsupportedClaims(text, "clinician"), [], `不該標記：${text}`);
+  }
+
+  // 血糖監測頻率只對病人版適用——寫給醫師是建議事項，由他判斷
+  const smbg = "建議每日固定記錄空腹與餐後血糖";
+  assert.ok(findUnsupportedClaims(smbg, "patient").length > 0);
+  assert.deepEqual(findUnsupportedClaims(smbg, "clinician"), []);
+});
+
+test("醫師版的每一段自由文字都要掃到，不只是異常項目的說明", () => {
+  // why、pattern、worth_a_look、data_quality_notes 都會直接進報告。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-06" },
+    rawSources: { labData: { rObject: [{ fee_ym: "11406", assay_item_name: "eGFR", assay_value: "43", unit_data: "ml/min/1.73m2" }] } },
+  });
+  const check = parseLabReview(
+    JSON.stringify({
+      abnormal: [{ item: "eGFR", worst: "43", worst_other: "", unit: "ml/min/1.73m2", reference: "", direction: "低", why: "符合糖尿病腎病變" }],
+      groups: [{ system: "腎臟", items: ["eGFR"], pattern: "慢性腎臟病進展中" }],
+      worth_a_look: ["血糖劇烈波動"],
+      data_quality_notes: ["建議關注血糖藥物調整"],
+    }),
+    facts,
+  );
+
+  const labels = new Set(check.unsupportedClaims.map((item) => item.label));
+  assert.ok(labels.has("推測診斷"), "why 與 pattern 都要掃");
+  assert.ok(labels.has("以變化或穩定度描述數值"), "worth_a_look 也要掃");
+  assert.ok(labels.has("處置或劑量建議"), "data_quality_notes 也要掃");
+
+  // 標記要出現在醫師版那一節的開頭，不是附在最後——醫師是由上往下讀的
+  const rendered = formatLabReview(check);
+  const warnIndex = rendered.indexOf("超出這批資料能支持的範圍");
+  const firstFinding = rendered.indexOf("符合糖尿病腎病變");
+  assert.ok(warnIndex > 0, "醫師版要標出這些句子");
+  assert.ok(warnIndex < firstFinding, "警語必須在被標記的內容之前");
 });

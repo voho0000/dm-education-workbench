@@ -201,6 +201,17 @@ export function reviewCase(input: ReviewInput): CaseReview {
     });
   }
 
+  if (labReview?.unsupportedClaims.length) {
+    flags.push({
+      code: "clinician-unsupported-claims",
+      severity: "attention",
+      message: `醫師版有 ${labReview.unsupportedClaims.length} 句超出資料支持範圍：${[
+        ...new Set(labReview.unsupportedClaims.map((item) => item.label)),
+      ].join("、")}`,
+      action: "這些句子已在醫師版標出來。數字都對，但推論不成立——時序、診斷與處置都不是這批資料推得出來的。",
+    });
+  }
+
   if (labReview?.unverifiedValues.length) {
     flags.push({
       code: "clinician-unverified-values",

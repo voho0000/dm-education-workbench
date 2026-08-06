@@ -16,6 +16,7 @@
 
 import type { CaseReview } from "./batch-review.ts";
 import type { LabNarrativeCheck } from "./lab-narrative.ts";
+import type { LabReviewCheck } from "./lab-llm.ts";
 import type { PatientFacts } from "./patient-facts.ts";
 import type { ReportReviewCheck } from "./report-review.ts";
 import { MODULE_CATALOG_APPROVED } from "./education-modules.ts";
@@ -51,6 +52,7 @@ export type PublishReadiness = {
 
 export type ReadinessInput = {
   facts: PatientFacts;
+  labReview?: LabReviewCheck | null;
   plan: ResolvedPlan;
   validation: ValidationReport;
   labNarrative: LabNarrativeCheck | null;
@@ -78,7 +80,7 @@ const HARD_ZERO = new Set([
 ]);
 
 export function assessPublishReadiness(input: ReadinessInput): PublishReadiness {
-  const { facts, plan, validation, labNarrative, reportReview, caseReview, llmRequested } = input;
+  const { facts, plan, validation, labNarrative, labReview, reportReview, caseReview, llmRequested } = input;
   const deductions: Deduction[] = [];
   let hard = false;
 
@@ -186,6 +188,19 @@ export function assessPublishReadiness(input: ReadinessInput): PublishReadiness 
       Math.min(20, labNarrative.uncitedNumbers.length * 5),
       `${labNarrative.uncitedNumbers.length} 個數字沒有列進引用清單，因此沒被逐項核對`,
       "確認它們不是模型自己算出來的。",
+    );
+  }
+
+  /*
+   * 醫師版的推論問題不歸零——它的讀者能自己判斷，而且句子已經標出來了。
+   * 但要扣分：一份需要醫師逐句核對的報告，不是「檢查都通過」的狀態。
+   */
+  if (labReview?.unsupportedClaims.length) {
+    add(
+      "clinician-unsupported-claims",
+      Math.min(25, labReview.unsupportedClaims.length * 5),
+      `醫師版有 ${labReview.unsupportedClaims.length} 句超出資料支持範圍`,
+      "句子已在醫師版標出來。數字都對，但時序、診斷與處置不是這批資料推得出來的。",
     );
   }
 

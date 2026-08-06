@@ -280,6 +280,7 @@ for (const name of names) {
     plan,
     validation,
     labNarrative,
+    labReview,
     reportReview,
     caseReview: review,
     llmRequested: args.live || Boolean(args.selector),

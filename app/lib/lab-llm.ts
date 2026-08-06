@@ -16,6 +16,7 @@
  */
 
 import { analyteForItemName } from "./lab-findings.ts";
+import { findUnsupportedClaims, type UnsupportedClaim } from "./unsupported-claims.ts";
 import type { LabItemFact, PatientFacts } from "./patient-facts.ts";
 
 export const LAB_REVIEW_PROMPT = `你是協助整理檢驗報告的助手，讀者是忙碌的醫師。
@@ -104,6 +105,14 @@ export type LabReviewCheck = {
   unknownItems: string[];
   /** 來源中實際存在的檢驗筆數，用來說明判讀涵蓋範圍 */
   sourceRecords: number;
+  /**
+   * 超出資料能支持範圍的說法。
+   *
+   * 原本這一層只查「引用的數字存不存在」，所以「符合糖尿病腎病變」
+   * 「腎功能顯著惡化」「尿酮 1+ 推到酮酸中毒風險」全部照樣進報告——
+   * 數字都對，推論不成立。
+   */
+  unsupportedClaims: UnsupportedClaim[];
 };
 
 function numeric(raw: string): string | null {
@@ -244,23 +253,38 @@ export function parseLabReview(raw: string, facts: PatientFacts): LabReviewCheck
     if (decisive.every(isUrine)) item.item = `${item.item}（尿液）`;
   }
 
+  const review = {
+    abnormal,
+    groups: (Array.isArray(record.groups) ? record.groups : [])
+      .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
+      .map((item) => ({
+        system: String(item.system ?? "").trim(),
+        items: (Array.isArray(item.items) ? item.items : []).map(String),
+        pattern: String(item.pattern ?? "").trim(),
+      }))
+      .filter((item) => item.system),
+    worth_a_look: strings(record.worth_a_look),
+    data_quality_notes: strings(record.data_quality_notes),
+  };
+
   return {
-    review: {
-      abnormal,
-      groups: (Array.isArray(record.groups) ? record.groups : [])
-        .filter((item): item is Record<string, unknown> => Boolean(item) && typeof item === "object")
-        .map((item) => ({
-          system: String(item.system ?? "").trim(),
-          items: (Array.isArray(item.items) ? item.items : []).map(String),
-          pattern: String(item.pattern ?? "").trim(),
-        }))
-        .filter((item) => item.system),
-      worth_a_look: strings(record.worth_a_look),
-      data_quality_notes: strings(record.data_quality_notes),
-    },
+    review,
     unverifiedValues,
     unknownItems,
     sourceRecords,
+    /*
+     * 掃模型寫的每一段自由文字。abnormal 的 why、群組的 pattern、
+     * worth_a_look、data_quality_notes 都會直接進醫師版，全部要掃。
+     */
+    unsupportedClaims: findUnsupportedClaims(
+      [
+        ...abnormal.map((item) => item.why),
+        ...review.groups.map((item) => item.pattern),
+        ...review.worth_a_look,
+        ...review.data_quality_notes,
+      ].join("\n"),
+      "clinician",
+    ),
   };
 }
 
@@ -277,6 +301,27 @@ export function formatLabReview(check: LabReviewCheck, alreadyShown: Set<string>
   lines.push(
     `  以下由輔助判讀器讀取 ${check.sourceRecords} 筆原始紀錄判定，只列與糖尿病相關且非急性事件當下的異常。`,
   );
+
+  /*
+   * 超出資料支持範圍的說法要標在這一節開頭，不是附在最後。
+   *
+   * 醫師是由上往下讀的。把「下面這幾句的推論不成立」放在後面，等於讓他先
+   * 讀完再被告知不能信——那時候印象已經形成了。實測五份裡有四份出現，
+   * 共 25 則。
+   */
+  if (check.unsupportedClaims.length) {
+    lines.push(
+      "",
+      `  ⚠ 下列 ${check.unsupportedClaims.length} 句超出這批資料能支持的範圍，請自行核對後再採用：`,
+    );
+    for (const claim of check.unsupportedClaims) {
+      lines.push(`     [${claim.label}] ${claim.sentence}`);
+    }
+    lines.push(
+      "     （申報資料只有費用年月、沒有採檢日期，因此推不出時序與變化；單一異常也推不出診斷。）",
+      "",
+    );
+  }
 
   if (shown.length) {
     for (const item of shown) {
