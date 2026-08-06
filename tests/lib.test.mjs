@@ -3699,3 +3699,65 @@ test("模型不得自訂血糖監測頻率", () => {
   // 把頻率交回醫療團隊就不算
   assert.deepEqual(banned("請與醫療團隊確認適合您的血糖監測頻率"), []);
 });
+
+test("檢驗過濾要認得實際資料用的縮寫，且不得誤濾核心指標", () => {
+  /*
+   * 樣式原本照全名寫（lymphocyte、neutrophil），而實際資料用縮寫——
+   * 實測 29 種項目該濾卻送出去了，光白血球分類就有 9 種、每份重複二十幾筆。
+   *
+   * 兩個方向都要測：漏濾浪費 token 並讓模型讀到無關的異常；誤濾會弄丟核心指標。
+   */
+  const sentText = (names) =>
+    formatPatientJson({
+      userInput: { REPORT_DATE: "2026-08-06" },
+      rawSources: {
+        labData: {
+          rObject: names.map(([name, code]) => ({
+            fee_ym: "11406",
+            order_code: code ?? "",
+            assay_item_name: name,
+            assay_value: "1",
+          })),
+        },
+      },
+    });
+
+  const MUST_SKIP = [
+    // 白血球分類的縮寫寫法，含來源端的拼字錯誤
+    "Lym.", "Seg", "Eos.", "Baso.", "Mono.", "Myelo.", "Aty.Lym.", "Neutrohpils", "Normoblast",
+    "Lymphocyte", "Absolute Neutrophil Count",
+    // 血液氣體與氧合
+    "PaO2/FIO2", "CTCO2", "O2 sat", "O2 Saturation", "sO2氧飽和度", "PH酸鹼值", "BEecf鹼超量", "HCO3重碳酸",
+    // 尿液酸鹼值
+    "PH(U)", "pH(Dipstick)", "Urine PH", "酸鹼度", "pH",
+    // 凝血
+    "PT", "PT INR", "MNPT", "MNAPTT", "APTT", "INR 國際標準",
+    // 發炎
+    "CRP", "Procalcitonin(PCT)",
+  ];
+  const text = sentText(MUST_SKIP.map((name) => [name]));
+  for (const name of MUST_SKIP) {
+    assert.ok(!text.includes(`${name}=`), `應該被濾掉卻仍送出：${name}`);
+  }
+
+  /*
+   * 這幾個看起來像但絕對不能濾：
+   *   SGPT／ALT 是肝酵素（PT 結尾）、PTH 副甲狀腺是 CKD 追蹤要用的、
+   *   Phosphorus 與 Phosphatase 含 ph。
+   */
+  const MUST_KEEP = [
+    "HbA1c", "Glucose AC", "Glucose(spot)", "Creatinine(B)", "eGFR", "Albumin",
+    "K", "Na", "Cl", "LDL-C", "HDL-C", "Triglyceride", "BUN", "Uric Acid",
+    "SGPT", "SGPT(ALT)", "ALT/SGPT 肝酵素", "SGOT", "Alkaline Phosphatase",
+    "Phosphorus", "PTH", "副甲狀腺賀爾蒙", "Calcium", "Hb", "HGB",
+  ];
+  const kept = sentText(MUST_KEEP.map((name) => [name]));
+  for (const name of MUST_KEEP) {
+    assert.ok(kept.includes(`${name}=`), `核心指標被誤濾：${name}`);
+  }
+
+  // 整碼刪的四碼仍然有效
+  for (const code of ["13007C", "13023C", "13006C", "11002C"]) {
+    assert.ok(!sentText([["某培養項目", code]]).includes("某培養項目="), `醫令碼 ${code} 未被濾掉`);
+  }
+});

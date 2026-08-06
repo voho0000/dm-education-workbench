@@ -331,12 +331,31 @@ export function formatPatientJson(value: unknown, options: FormatOptions = {}): 
  * 讀的是原始 JSON，完全不受這裡影響——有測試釘住兩者的產出不變。
  */
 const LLM_SKIP_ORDER_CODES = /^(13007C|13023C|13006C|11002C)$/;
+/*
+ * 這些樣式原本是照「全名」寫的，而實際資料用的是縮寫——實測 29 種項目
+ * 該濾卻送出去了（Lym.、Seg、O2 sat、PT INR、MNAPTT…），其中光是
+ * 白血球分類就有 9 種、每份重複二十幾筆。
+ *
+ * 兩個相反的風險都要顧：漏濾會浪費 token 並讓模型讀到與糖尿病無關的異常；
+ * 誤濾會把核心指標弄丟。特別小心這幾個看起來像但不能濾的：
+ *   SGPT／ALT（肝酵素，PT 結尾）、PTH 副甲狀腺（CKD 追蹤要用）、
+ *   Phosphorus 磷、Phosphatase（含 ph）。
+ * 下面每一條都對五份實測資料的全部項目名跑過，有測試釘住。
+ */
 const LLM_SKIP_ITEM_PATTERNS: ReadonlyArray<RegExp> = [
-  /^(p?H|pH值)$/i,
-  /^(PO2|pO2|PCO2|pCO2|HCO3|TCO2|O2SAT|BE|BEecf|BEb|SBC|ctO2|FIO2|A-?aDO2)/i,
-  /(lymphocyte|monocyte|basophil|eosinophil|neutrophil|^ANC$|^Meta$|^Blast$|^Band|myelocyte|atypical|^Promye)/i,
+  // 尿液與血液的酸鹼值。要求 pH 是獨立詞或後面接括號／「值」「酸鹼」，
+  // 否則會掃到 Phosphorus、Phosphatase。
+  /^(urine\s*)?p?h(\s*\(|值|酸鹼|$)|^酸鹼度$/i,
+  // 血液氣體與氧合。PaO2/FIO2、CTCO2、O2 sat 都不在原本的開頭錨點內。
+  /^(PO2|pO2|PCO2|pCO2|HCO3|TCO2|CTCO2|O2SAT|BE|BEecf|BEb|SBC|ctO2|FIO2|A-?aDO2)/i,
+  /PaO2|FIO2|^O2\s*sat|^sO2|氧飽和|氧分壓|二氧化碳分壓|重碳酸|鹼超量/i,
+  // 白血球分類。實際資料用縮寫（Lym. Seg Eos. Baso. Mono. Myelo. Aty.Lym.），
+  // 還有一個來源端的拼字錯誤 Neutrohpils。
+  /^(lym|mono|eos|baso|seg|myelo|meta|blast|band|promye|normoblast|neutro|aty)/i,
+  /(lymphocyte|monocyte|basophil|eosinophil|neutrophil|myelocyte|atypical|^ANC$)/i,
   /(^hs)?CRP|procalcitonin|^ESR$|紅血球沉降/i,
-  /^(PT|aPTT|APTT|INR)$|凝血|fibrinogen|D-?dimer/i,
+  // 凝血。\bPT 不會掃到 SGPT（P 前面是 G，沒有詞界），MNPT／MNAPTT 要另外列。
+  /^(PT|aPTT|APTT|INR|MNPT|MNAPTT)(\s|$)|^PT\s*INR|^INR\s|凝血|fibrinogen|D-?dimer/i,
 ];
 
 function skipForLlm(record: JsonRecord): boolean {
