@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { readFile } from "node:fs/promises";
+import { readFileSync } from "node:fs";
 import test from "node:test";
 
 import { GUIDELINE_KNOWN_CHARS, GUIDELINE_KNOWN_TOKENS, estimateTokens, guidelineTokens } from "../app/lib/tokens.ts";
@@ -3086,7 +3087,7 @@ test("metformin 的腎功能提示只在真的用 metformin 時觸發", () => {
 });
 
 test("只由檢驗值救回的腎臟主題列為需確認，不是已發生", () => {
-  // KDIGO 要求異常持續三個月以上；申報資料只有費用年月，證明不了持續性。
+  // 指引要求先排除非糖尿病引起的腎臟病（p.197 六項情形），申報資料判定不了。
   // 衛教內容照納入，但醫師版不能用一筆無日期的 eGFR 下確診。
   const of = (raw) => {
     const facts = extractPatientFacts(raw);
@@ -3269,8 +3270,11 @@ test("足檢頻率依 IWGDF 分級，且不與每年一次的神經評估並列"
   assert.equal(both.length, 1);
   assert.match(both[0], /3 到 6 個月/);
 
-  // 兩者都沒有就不提足部——不對沒有風險的人加檢查
-  assert.deepEqual(footLines({ R1: 1 }), []);
+  // 兩者都沒有時回到表九的通則：所有糖尿病人每年一次，而不是不提。
+  // 這一條列一次就好，不能因為改成通用而變成兩條。
+  const baseline = footLines({ R1: 1 });
+  assert.equal(baseline.length, 1, `足部條目應只有一條：${baseline.join(" ／ ")}`);
+  assert.match(baseline[0], /每年檢查一次腳的血液循環/);
 
   // 出處要指向抽換檔，不是 418 頁全文（頁次體系不同）
   const rule = RULES_BY_ID.get("foot-exam-iwgdf-2");
@@ -3479,4 +3483,53 @@ test("彙總只列需要行動的案件，note 不會讓案件進清單", () => 
   const text = formatBatchReview([clean, flagged]);
   assert.ok(text.includes("P-要看"));
   assert.ok(!text.includes("P-乾淨"), "沒問題的案件不該佔用清單版面");
+});
+
+test("三層輸入各自正確，且完整版永遠不會被送出", () => {
+  // 只給送出版而不給對照，沒有人能確認被拿掉的到底是什麼。
+  // 但完整版含 userId 與生日，只能在瀏覽器內顯示。
+  const raw = {
+    downloadType: "DiabetesEducation",
+    userInfo: { userId: "AB1234567", gender: "F", birthday: "1960/01/01" },
+    userInput: { REPORT_DATE: "2026-08-06", BIRTHDAY: "1960/01/01" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "11406", assay_item_name: "HbA1c", assay_value: "8.1", unit_data: "%" },
+          // 兩種刪法各測一種：培養是整碼刪（13007C），CRP 是依名稱刪
+          { fee_ym: "11406", order_code: "13007C", assay_item_name: "細菌培養", assay_value: "No growth" },
+          { fee_ym: "11406", assay_item_name: "CRP", assay_value: "3.2", unit_data: "mg/L" },
+        ],
+      },
+    },
+  };
+
+  const verbatim = formatPatientJson(raw, { skipIrrelevantLabs: false, deidentify: false });
+  const sent = formatPatientJson(raw);
+
+  assert.ok(verbatim.includes("AB1234567"), "完整版要照抄 userId，否則看不出被拿掉什麼");
+  assert.ok(verbatim.includes("1960"), "完整版要照抄生日");
+  assert.ok(verbatim.includes("細菌培養"), "完整版不濾檢驗（整碼刪的那類）");
+  assert.ok(verbatim.includes("CRP"), "完整版不濾檢驗（依名稱刪的那類）");
+
+  assert.ok(!sent.includes("AB1234567"), "送出版不得含 userId");
+  assert.ok(!sent.includes("1960"), "送出版不得含生日");
+  assert.ok(!sent.includes("細菌培養"), "送出版濾掉整碼刪的類別");
+  assert.ok(!sent.includes("CRP"), "送出版濾掉依名稱刪的項目");
+  assert.ok(sent.includes("HbA1c"), "核心指標不得被濾掉");
+
+  // 預設值就是送出版。呼叫端忘了傳選項時，拿到的必須是安全的那一份。
+  assert.equal(formatPatientJson(raw, {}), sent);
+});
+
+test("送出去的一律是去識別版，不是頁面上顯示的完整版", () => {
+  // 這條擋的是「頁面新增對照分頁時不小心把完整版接到送出路徑上」。
+  const source = readFileSync(new URL("../app/page.tsx", import.meta.url), "utf8");
+  const verbatimUses = source.match(/llmTextVerbatim/g) ?? [];
+  assert.ok(verbatimUses.length > 0, "對照用的完整版必須存在");
+  // 送出路徑讀的變數名是 llmText；完整版不得出現在組裝送出內容的地方
+  assert.ok(
+    !/composeInput[\s\S]{0,400}llmTextVerbatim/.test(source),
+    "完整版含 userId 與生日，不得進入送出內容",
+  );
 });

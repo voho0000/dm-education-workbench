@@ -653,20 +653,67 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
  * ⚠ 抽取出來的門檻表**沒有微量白蛋白尿（30–300 mg/g）的數字**，所以這一段接不到
  * 早期白蛋白尿。要涵蓋那一段需要醫療團隊補一條有出處的規則，不能由程式自行訂 30。
  */
-export function kidneyLabEvidence(facts: PatientFacts): { triggered: boolean; reason: string } {
+/**
+ * 檢驗證據能不能把腎臟主題救回來。
+ *
+ * caveat 說明「為什麼只能算需確認」，而兩種證據的理由不一樣——eGFR 是
+ * 指引要求先排除非糖尿病引起的腎臟病，UACR 是三到六個月內三次有兩次。
+ * 共用一句話會對其中一種說謊。
+ */
+/**
+ * 依實際 eGFR 選出該用哪一段的監測頻率規則（表二）。
+ *
+ * 用最低值，不用最新值——資料沒有採檢日期，判定不了哪一筆最新，而
+ * 挑高的那一筆會把追蹤頻率放寬到病人可能不該有的程度。
+ */
+export function ckdMonitoringRuleId(facts: PatientFacts): string | null {
+  const egfr = extractLabFindings(facts).find((item) => item.analyte === "eGFR");
+  if (!egfr) return null;
+  if (egfr.min < 30) return null; // 低於 30 走轉介，不是調整監測頻率
+  if (egfr.min < 45) return "ckd-egfr-30-44";
+  if (egfr.min < 60) return "ckd-egfr-45-60";
+  return null;
+}
+
+export function kidneyLabEvidence(facts: PatientFacts): { triggered: boolean; reason: string; caveat: string } {
   const findings = extractLabFindings(facts);
   const egfr = findings.find((item) => item.analyte === "eGFR");
   const uacr = findings.find((item) => item.analyte === "UACR");
 
   if (egfr && egfr.min < 60) {
-    return { triggered: true, reason: `檢驗數據顯示 eGFR 曾低於 60（最低 ${egfr.min}）` };
+    return {
+      triggered: true,
+      reason: `檢驗數據顯示 eGFR 曾低於 60（最低 ${egfr.min}）`,
+      caveat:
+        // 只引我們實際採用的兩份指引，不夾帶外部標準。指引自己講的是
+        // 「必須排除非糖尿病引起的 CKD」並列出六項情形（p.197）。
+        "指引要求先排除非糖尿病引起的腎臟病（尿液紅白血球、白蛋白尿快速增加、eGFR 快速下降、未合併視網膜病變等六項情形），而申報資料判定不了這些；資料也只有費用年月、沒有採檢日期，看不出是單次異常還是持續異常",
+    };
   }
   const macro = uacr?.values.filter((v) => v.value > 300 || (v.value === 300 && v.qualifier === ">="));
   if (macro?.length) {
     return {
       triggered: true,
       reason: `檢驗數據顯示 UACR 曾達到或超過 300 mg/g（${[...new Set(macro.map((v) => v.raw))].join("、")}）`,
+      caveat: "指引要求 3–6 個月內重複測定、3 次中有 2 次異常才診斷為蛋白尿，而資料沒有採檢日期，判定不了是第幾次",
     };
   }
-  return { triggered: false, reason: "" };
+  /*
+   * 微量白蛋白尿（30–299 mg/g）。指引把它算成白蛋白尿的一部分，不是正常，
+   * 而且它是糖尿病腎病變唯一能在 eGFR 還正常時抓到的訊號——只認 ≥300 等於
+   * 要等到巨量蛋白尿才提，那時候能做的事已經少很多。
+   *
+   * 但診斷需要「三到六個月內三次檢查中有兩次異常」，而申報資料沒有採檢
+   * 日期，證明不了那個條件。所以納入衛教內容，判定標成需確認——與 eGFR
+   * 低於 60 的處理一致。
+   */
+  const micro = uacr?.values.filter((v) => v.value >= 30 && v.value < 300);
+  if (micro?.length) {
+    return {
+      triggered: true,
+      reason: `檢驗數據顯示 UACR 曾介於 30–299 mg/g（${[...new Set(micro.map((v) => v.raw))].join("、")}），屬微量白蛋白尿範圍`,
+      caveat: "指引要求 3–6 個月內重複測定、3 次中有 2 次異常才診斷為蛋白尿，而資料沒有採檢日期，判定不了是第幾次",
+    };
+  }
+  return { triggered: false, reason: "", caveat: "" };
 }

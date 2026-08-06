@@ -209,7 +209,7 @@ function CompositionPanel({ input }: { input: ComposedInput }) {
 export default function Home() {
   const [rawInput, setRawInput] = useState("");
   const [fileName, setFileName] = useState("");
-  const [inputTab, setInputTab] = useState<"raw" | "formatted">("raw");
+  const [inputTab, setInputTab] = useState<"raw" | "verbatim" | "sent">("raw");
   const [apiKey, setApiKey] = useState("");
   const [showApiKey, setShowApiKey] = useState(false);
   const [modelChoice, setModelChoice] = useState(DEFAULT_MODEL);
@@ -270,11 +270,15 @@ export default function Home() {
   const patientFacts = useMemo(() => (parsedRawJson ? extractPatientFacts(parsedRawJson) : null), [parsedRawJson]);
   const llmText = useMemo(() => (parsedRawJson ? formatPatientJson(parsedRawJson) : ""), [parsedRawJson]);
   /**
-   * 未過濾的完整整理版。只用於頁面對照——只給「濾後」的結果而不給「濾前」，
-   * 沒有人能判斷濾掉的是不是不該濾的。送給模型的一律是 llmText。
+   * 逐欄照抄的完整整理版：不濾檢驗、不去識別。
+   *
+   * 只在瀏覽器內顯示，**永遠不送出**——它含 userId 與生日。存在的理由是
+   * 只給送出版而不給對照，沒有人能確認被拿掉的到底是什麼、濾掉的是不是
+   * 不該濾的。送給模型的一律是 llmText。
    */
-  const llmTextUnfiltered = useMemo(
-    () => (parsedRawJson ? formatPatientJson(parsedRawJson, { skipIrrelevantLabs: false }) : ""),
+  const llmTextVerbatim = useMemo(
+    () =>
+      parsedRawJson ? formatPatientJson(parsedRawJson, { skipIrrelevantLabs: false, deidentify: false }) : "",
     [parsedRawJson],
   );
   /** 不呼叫 LLM 也產得出來的判定，讓使用者按下按鈕前就知道會納入什麼。 */
@@ -640,15 +644,15 @@ export default function Home() {
                 : "檢驗只有費用年月、沒有採檢日，因此後面所有敘述都不得聲稱時序",
               "R／PR 欄位缺 key 就記成「未提供」，不補 0",
               `整理成好讀文字後再濾一次：微生物培養、藥敏、輸血配合、血液氣體、白血球分類、發炎與凝血。這些 prompt 本來就叫模型忽略，送了再叫它不要看等於付兩次錢。上面兩份可以直接對照，${
-                llmTextUnfiltered && llmText
-                  ? `濾掉 ${formatNumber(charCount(llmTextUnfiltered) - charCount(llmText))} 字`
+                llmTextVerbatim && llmText
+                  ? `濾掉 ${formatNumber(charCount(llmTextVerbatim) - charCount(llmText))} 字`
                   : "看濾掉了什麼"
               }。`,
               "程式判定讀的是原始 JSON，不經過這道過濾——濾錯也不會影響主題、目標與門檻判定。",
             ]
           : [],
         outputs: [
-          { label: "① 整理成 LLM 好讀文字（全部紀錄）", text: llmTextUnfiltered },
+          { label: "① 整理成 LLM 好讀文字（全部紀錄）", text: llmTextVerbatim },
           { label: "② 濾掉與糖尿病無關的檢驗（這份才送給 ②③）", text: llmText },
           { label: "確定性事實（給下一站判定）", text: factsText },
         ],
@@ -724,7 +728,7 @@ export default function Home() {
   }, [
     rawInput,
     llmText,
-    llmTextUnfiltered,
+    llmTextVerbatim,
     patientFacts,
     preview,
     factsText,
@@ -830,23 +834,39 @@ export default function Home() {
                 <button type="button" className={inputTab === "raw" ? "active" : ""} onClick={() => setInputTab("raw")}>
                   原始 JSON
                 </button>
+                {/*
+                  三層都要看得到。中間這一層是「照抄整理、什麼都沒動」，
+                  右邊才是實際送出去的——只給送出版的話，沒有人能確認被
+                  拿掉的到底是什麼。
+                */}
                 <button
                   type="button"
-                  className={inputTab === "formatted" ? "active" : ""}
-                  onClick={() => setInputTab("formatted")}
+                  className={inputTab === "verbatim" ? "active" : ""}
+                  onClick={() => setInputTab("verbatim")}
+                  disabled={!llmTextVerbatim}
+                >
+                  整理版（完整）
+                </button>
+                <button
+                  type="button"
+                  className={inputTab === "sent" ? "active" : ""}
+                  onClick={() => setInputTab("sent")}
                   disabled={!llmText}
                 >
-                  LLM 好讀文字
+                  送出版（去識別・濾過）
                 </button>
               </div>
               <span className="fieldNote">
-                {formatNumber(charCount(inputTab === "raw" ? rawInput : llmText))} 字
+                {formatNumber(charCount(inputTab === "raw" ? rawInput : inputTab === "verbatim" ? llmTextVerbatim : llmText))} 字
+                {inputTab === "sent" && llmTextVerbatim
+                  ? `　少了 ${formatNumber(charCount(llmTextVerbatim) - charCount(llmText))} 字`
+                  : ""}
               </span>
             </div>
             <textarea
               className="inputEditor"
-              value={inputTab === "raw" ? rawInput : llmText}
-              readOnly={inputTab === "formatted"}
+              value={inputTab === "raw" ? rawInput : inputTab === "verbatim" ? llmTextVerbatim : llmText}
+              readOnly={inputTab !== "raw"}
               onChange={(event) => {
                 setRawInput(event.target.value);
                 resetOutputs();

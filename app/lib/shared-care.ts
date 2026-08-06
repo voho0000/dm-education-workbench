@@ -66,8 +66,24 @@ const TYPE1_INTERVAL_SWAP: Record<string, string> = {
   "kidney-intensive-followup": "t1-kidney-twice-yearly",
 };
 
-/** 每份報告都適用的追蹤項目。 */
-const BASE_INTERVAL_RULES = ["interval-hba1c", "interval-lipid", "interval-kidney", "interval-oral"];
+/**
+ * 每份報告都適用的追蹤項目。
+ *
+ * 眼底與足部對所有糖尿病人適用（表九），不是只有已經有視網膜或周邊血管
+ * 問題的人才做——視網膜病變在晚期之前沒有症狀，那正是篩檢存在的理由。
+ * 原本只在對應主題命中時才列，等於只提醒已經出事的人去做篩檢。
+ *
+ * 主題命中時會被更具體的條目取代（眼底追蹤頻率、IWGDF 足檢分級），
+ * 去重在下面處理。
+ */
+const BASE_INTERVAL_RULES = [
+  "interval-hba1c",
+  "interval-lipid",
+  "interval-kidney",
+  "interval-eye",
+  "interval-foot",
+  "interval-oral",
+];
 
 /**
  * 依納入的主題產生追蹤時程清單。

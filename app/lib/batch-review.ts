@@ -159,6 +159,20 @@ export function reviewCase(input: ReviewInput): CaseReview {
     });
   }
 
+  /*
+   * 診斷碼說第 2 型，但用藥只有胰島素、一顆非胰島素的藥都沒有。
+   * 不推翻診斷碼，但這是編碼錯誤的第 1 型會有的樣子，而兩型的餐後血糖
+   * 上限與篩檢起始時機都不同——判錯型別，整份報告的數字就是錯的。
+   */
+  if (facts.diabetesType.insulinOnly) {
+    flags.push({
+      code: "type2-but-insulin-only",
+      severity: "attention",
+      message: "診斷碼判為第 2 型，但用藥只有胰島素、沒有任何非胰島素的降血糖藥。",
+      action: "這也可能是被編成第 2 型的第 1 型病人。報告目前套第 2 型的數值，請確認診斷類型。",
+    });
+  }
+
   const provisional = plan.decisions.filter((item) => item.provisional);
   if (provisional.length) {
     flags.push({

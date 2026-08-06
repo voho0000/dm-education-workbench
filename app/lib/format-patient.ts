@@ -171,6 +171,16 @@ export type FormatOptions = {
    * 沒有人能判斷濾掉的是不是不該濾的。
    */
   skipIrrelevantLabs?: boolean;
+  /**
+   * 是否移除 userId 並把生日換算成年齡。
+   *
+   * 預設 true（送進 LLM 的版本）。傳 false 會得到逐欄照抄的完整整理版，
+   * 頁面用它讓人看得到「換算與刪減前」長什麼樣——只給送出版而不給對照，
+   * 沒有人能確認被拿掉的到底是什麼。
+   *
+   * **傳 false 的結果不得送出。** 它含直接識別欄位，只在瀏覽器內顯示。
+   */
+  deidentify?: boolean;
 };
 
 
@@ -203,6 +213,7 @@ function ageFrom(birthday: unknown, reportDate: unknown): string | null {
 
 export function formatPatientJson(value: unknown, options: FormatOptions = {}): string {
   const skipIrrelevant = options.skipIrrelevantLabs ?? true;
+  const deidentify = options.deidentify ?? true;
   if (!isRecord(value)) {
     return [
       "【輸入資料】",
@@ -231,8 +242,8 @@ export function formatPatientJson(value: unknown, options: FormatOptions = {}): 
 
   const reportDate = userInput.REPORT_DATE;
   for (const [key, item] of Object.entries(userInfo)) {
-    if (DROP_KEYS.test(key)) continue;
-    if (BIRTHDAY_KEYS.test(key)) {
+    if (deidentify && DROP_KEYS.test(key)) continue;
+    if (deidentify && BIRTHDAY_KEYS.test(key)) {
       const age = ageFrom(item, reportDate);
       lines.push(age ? `年齡：${age} 歲（由生日換算，原始生日不外送）` : "年齡：無法換算（來源生日或報告日期缺漏）");
       continue;
@@ -244,9 +255,9 @@ export function formatPatientJson(value: unknown, options: FormatOptions = {}): 
   const userInputKeys = Object.keys(userInput).sort(compareUserInputKeys);
   if (!userInputKeys.length) lines.push("未提供來源模型欄位。");
   for (const key of userInputKeys) {
-    if (DROP_KEYS.test(key)) continue;
+    if (deidentify && DROP_KEYS.test(key)) continue;
     const label = USER_INPUT_LABELS[key] ? `（${USER_INPUT_LABELS[key]}）` : "";
-    if (BIRTHDAY_KEYS.test(key)) {
+    if (deidentify && BIRTHDAY_KEYS.test(key)) {
       // userInput 也帶一份生日。只換掉 userInfo 那份等於沒去識別。
       const age = ageFrom(userInput[key], reportDate);
       lines.push(age ? `AGE（年齡，由 ${key} 換算）：${age} 歲` : `AGE（年齡）：無法換算（${key} 或 REPORT_DATE 缺漏）`);

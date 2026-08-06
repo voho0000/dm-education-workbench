@@ -27,6 +27,12 @@ function unknown(reason: string): Unknown {
 export type DiabetesTypeEvidence = {
   /** 判定結果。conflicting 與 absent 都不得用來啟用 T1／T2 補充模組。 */
   verdict: "type1-confirmed" | "type2-confirmed" | "conflicting" | "absent";
+  /**
+   * 診斷碼判為第二型，但用藥只有胰島素、沒有任何非胰島素的降血糖藥。
+   *
+   * 不推翻診斷碼，但這是編碼錯誤的第一型會有的樣子，批次清單會據此提醒。
+   */
+  insulinOnly?: boolean;
   type1IcdCodes: string[];
   type2IcdCodes: string[];
   otherDiabetesIcdCodes: string[];
@@ -168,6 +174,48 @@ function riskFields(userInput: JsonRecord, prefix: "R" | "PR"): RiskField[] {
   return fields;
 }
 
+
+/*
+ * 用藥型態：非胰島素的降血糖藥，是不是完全沒有。
+ *
+ * 診斷碼兩型同時出現時（實測常見——申報碼是計費用途，同一位病人在不同院所
+ * 可能被編成不同碼），用藥型態是唯一還能講話的證據：第 1 型只能靠胰島素，
+ * 第 2 型幾乎一定有非胰島素的藥。
+ *
+ * 軸線刻意用「非胰島素」而不是「口服」——GLP-1 RA 是針劑但屬於第 2 型的
+ * 用藥，寫成「口服」會把它漏掉，讓一位打 GLP-1 的第 2 型病人被判成第 1 型。
+ *
+ * metformin 少數第 1 型病人也會用，所以它單獨出現時不足以推翻，但這種
+ * 組合本來就會落在「有非胰島素藥」→ 判第 2 型，方向偏保守，可以接受。
+ */
+const INSULIN = /insulin|胰島素|glargine|degludec|detemir|aspart|lispro|glulisine|NPH/i;
+const NON_INSULIN_ANTIDIABETIC =
+  /metformin|雙胍|glicla|glime|glipi|gliben|glyburide|repaglinide|nateglinide|mitiglinide|acarbose|miglitol|pioglitazone|rosiglitazone|gliptin|gliflozin|glutide|tide\b|磺醯脲|二甲雙胍/i;
+
+type MedicationPattern = {
+  insulin: boolean;
+  nonInsulin: boolean;
+  /** 完全沒有降血糖藥的紀錄，兩個布林都是 false 時無從推論 */
+  any: boolean;
+};
+
+function medicationPattern(medications: unknown[]): MedicationPattern {
+  let insulin = false;
+  let nonInsulin = false;
+  for (const record of medications) {
+    if (!isRecord(record)) continue;
+    const text = [record.drug_ing_name, record.drug_ename, record.drug_atc5_name]
+      .map((value) => String(value ?? ""))
+      .join(" ");
+    if (!text.trim()) continue;
+    // 順序有意義：insulin glargine 也會命中 NON_INSULIN 的 tide\b 之類寬鬆樣式，
+    // 所以先判胰島素，命中就不再看另一組。
+    if (INSULIN.test(text)) insulin = true;
+    else if (NON_INSULIN_ANTIDIABETIC.test(text)) nonInsulin = true;
+  }
+  return { insulin, nonInsulin, any: insulin || nonInsulin };
+}
+
 function detectDiabetesType(medications: unknown[]): DiabetesTypeEvidence {
   const type1 = new Set<string>();
   const type2 = new Set<string>();
@@ -187,12 +235,37 @@ function detectDiabetesType(medications: unknown[]): DiabetesTypeEvidence {
   const otherCodes = [...other].sort();
 
   if (type1Codes.length && type2Codes.length) {
+    /*
+     * 兩型的碼同時出現時，改看用藥型態。只有這一種情況會用到用藥——
+     * 診斷碼乾淨時不推翻它，因為用藥型態本身也有例外（第 2 型晚期只用
+     * 胰島素的人不少）。這裡的方向是：只有「完全沒有非胰島素降血糖藥」
+     * 才敢往第 1 型判，其餘一律往第 2 型或維持無法判定。
+     */
+    const pattern = medicationPattern(medications);
+    if (pattern.insulin && !pattern.nonInsulin) {
+      return {
+        verdict: "type1-confirmed",
+        type1IcdCodes: type1Codes,
+        type2IcdCodes: type2Codes,
+        otherDiabetesIcdCodes: otherCodes,
+        note: `申報資料同時出現兩型診斷碼（第一型 ${type1Codes.join("、")}；第二型 ${type2Codes.join("、")}），但用藥只有胰島素、沒有任何非胰島素的降血糖藥，因此依用藥型態判為第一型。這是推論不是診斷，需由醫療團隊確認。`,
+      };
+    }
+    if (pattern.nonInsulin) {
+      return {
+        verdict: "type2-confirmed",
+        type1IcdCodes: type1Codes,
+        type2IcdCodes: type2Codes,
+        otherDiabetesIcdCodes: otherCodes,
+        note: `申報資料同時出現兩型診斷碼（第一型 ${type1Codes.join("、")}；第二型 ${type2Codes.join("、")}），用藥含非胰島素的降血糖藥，因此判為第二型。這是推論不是診斷，需由醫療團隊確認。`,
+      };
+    }
     return {
       verdict: "conflicting",
       type1IcdCodes: type1Codes,
       type2IcdCodes: type2Codes,
       otherDiabetesIcdCodes: otherCodes,
-      note: "申報資料同時出現第一型與第二型糖尿病診斷碼，無法據此判定類型；不得啟用任何 T1／T2 補充模組。",
+      note: "申報資料同時出現第一型與第二型糖尿病診斷碼，且用藥紀錄中沒有可用來區分的降血糖藥，無法判定類型；不得啟用任何 T1／T2 補充模組。",
     };
   }
   if (type1Codes.length) {
@@ -205,12 +278,22 @@ function detectDiabetesType(medications: unknown[]): DiabetesTypeEvidence {
     };
   }
   if (type2Codes.length) {
+    /*
+     * 診斷碼說第 2 型，但用藥只有胰島素、一顆非胰島素的藥都沒有——這是
+     * 編碼錯誤的第 1 型會有的樣子。不推翻診斷碼（使用者的決定：有第二型
+     * 診斷碼就第二型），但把線索留在 note 裡，批次清單會據此提醒人看。
+     */
+    const pattern = medicationPattern(medications);
+    const insulinOnly = pattern.insulin && !pattern.nonInsulin;
     return {
       verdict: "type2-confirmed",
       type1IcdCodes: [],
       type2IcdCodes: type2Codes,
       otherDiabetesIcdCodes: otherCodes,
-      note: "申報資料只出現第二型糖尿病診斷碼。注意申報診斷碼是計費用途，仍應由醫療團隊確認。",
+      insulinOnly,
+      note: insulinOnly
+        ? "申報資料只出現第二型糖尿病診斷碼，但用藥只有胰島素、沒有任何非胰島素的降血糖藥。這種組合也可能是被編成第二型的第一型病人，建議由醫療團隊確認診斷類型。"
+        : "申報資料只出現第二型糖尿病診斷碼。注意申報診斷碼是計費用途，仍應由醫療團隊確認。",
     };
   }
   return {

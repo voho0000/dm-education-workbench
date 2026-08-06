@@ -21,7 +21,7 @@
  * 醫師照著跳過去會落在隔壁章。改頁次前請先確認手上的檔案是不是這兩份。
  */
 
-export const RULES_VERSION = "2022-guideline-extract-0.6";
+export const RULES_VERSION = "2022-guideline-extract-0.7";
 export const RULES_APPROVED = false;
 
 export type GuidelineSourceId = "t2-2022" | "t1-2022" | "t2-ch15-2024";
@@ -244,6 +244,39 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
     patientFacing: true,
   },
 
+  {
+    /*
+     * 次要目標。指引表一寫明「當主要目標達成時，再評估次要目標」，
+     * 所以這兩條不與 LDL 並列，也不進病人版——對病人講四個膽固醇數字
+     * 只會稀釋掉真正該記住的那一個。
+     */
+    id: "non-hdl-general",
+    targetValue: "低於 130 mg/dL。",
+    category: "lipid-target",
+    appliesTo: "所有糖尿病人（次要目標，主要目標達成後再評估）",
+    statement: "非高密度脂蛋白膽固醇目標為低於 130 mg/dL。",
+    citation: { table: "表一 血脂的目標建議", pdfPage: 153 },
+    patientFacing: false,
+  },
+  {
+    id: "non-hdl-cvd",
+    targetValue: "低於 100 mg/dL。",
+    category: "lipid-target",
+    appliesTo: "已有心血管疾病（次要目標，主要目標達成後再評估）",
+    statement: "非高密度脂蛋白膽固醇目標為低於 100 mg/dL。",
+    citation: { table: "表一 血脂的目標建議", pdfPage: 153 },
+    patientFacing: false,
+  },
+  {
+    id: "total-cholesterol",
+    targetValue: "低於 160 mg/dL。",
+    category: "lipid-target",
+    appliesTo: "非懷孕成年糖尿病人（次要目標）",
+    statement: "總膽固醇目標為低於 160 mg/dL。",
+    citation: { table: "表六 非懷孕成年人糖尿病的治療目標", pdfPage: 12 },
+    patientFacing: false,
+  },
+
   // ── 腎臟與用藥安全 ────────────────────────────────────────
   {
     id: "metformin-egfr-30",
@@ -269,6 +302,56 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
       "異常結果應於 3–6 個月內重複測定，3 次檢查中有 2 次異常才診斷為蛋白尿。",
     citation: { table: "表九 註 2", pdfPage: 18 },
     patientFacing: true,
+  },
+  {
+    /*
+     * 微量白蛋白尿。指引的診斷條件是「三到六個月內三次檢查中有兩次異常」，
+     * 而申報資料沒有採檢日期，證明不了那個條件——所以規則本身照抄門檻，
+     * 由呼叫端把它標成需確認，不當成確診。
+     */
+    id: "microalbuminuria",
+    category: "kidney",
+    appliesTo: "尿液白蛋白／肌酸酐比值介於 30–299 mg/g",
+    statement:
+      "屬白蛋白尿範圍，需於 3–6 個月內重複測定，3 次檢查中有 2 次異常才診斷為蛋白尿。",
+    patientStatement:
+      "您的尿液白蛋白／肌酸酐比值曾出現偏高的結果。這是腎臟早期變化的指標，指引建議在 3 到 6 個月內再測一次確認，請與醫療團隊討論追蹤安排。",
+    citation: { table: "表九 註 2", pdfPage: 18 },
+    patientFacing: true,
+  },
+  {
+    /*
+     * 表二把 CKD 病人的處置依 eGFR 分成三段。原本只有一條「異常需追蹤者
+     * 每 3–6 個月」，對 eGFR 55 與 eGFR 32 的病人講同一句話，而指引對這
+     * 兩位的建議差三倍頻率。
+     *
+     * 只收 eGFR 相關的監測頻率與轉介，不收藥物劑量調整與疫苗、BMD、
+     * 維生素 D 那些——那些需要臨床決策，不是申報資料能判定的。
+     */
+    id: "ckd-egfr-45-60",
+    category: "screening-interval",
+    appliesTo: "eGFR 介於 45–60 mL/min/1.73m²",
+    statement: "每 6 個月測一次 eGFR，並至少每年測定電解質、碳酸氫鹽、血色素、鈣、磷與副甲狀腺荷爾蒙。",
+    patientStatement: "您的腎功能數值屬於需要較密切追蹤的範圍，建議每 6 個月檢查一次腎功能。",
+    citation: { table: "表二 CKD 糖尿病人之處置", pdfPage: 198 },
+    patientFacing: true,
+  },
+  {
+    id: "ckd-egfr-30-44",
+    category: "screening-interval",
+    appliesTo: "eGFR 介於 30–44 mL/min/1.73m²",
+    statement: "每 3 個月測一次 eGFR，並每 3–6 個月測定電解質、碳酸氫鹽、鈣、磷、副甲狀腺荷爾蒙、血色素與白蛋白。",
+    patientStatement: "您的腎功能數值屬於需要密切追蹤的範圍，建議每 3 個月檢查一次腎功能。",
+    citation: { table: "表二 CKD 糖尿病人之處置", pdfPage: 199 },
+    patientFacing: true,
+  },
+  {
+    id: "ckd-non-diabetic-suspicion",
+    category: "referral-urgency",
+    appliesTo: "eGFR 介於 45–60 mL/min/1.73m²，且懷疑為非糖尿病引起之腎臟病",
+    statement: "轉介至腎臟專科醫師。",
+    citation: { table: "表二 CKD 糖尿病人之處置", pdfPage: 198 },
+    patientFacing: false,
   },
   {
     id: "kidney-intensive-followup",
