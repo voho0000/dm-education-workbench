@@ -134,7 +134,17 @@ export type LabNarrativeCheck = {
  * 而這個標記的用途是告訴人「這幾句不可信」，必須夠準才有人看。
  */
 const BANNED = [
-  { pattern: /最近一次|最新一筆|目前的?數值為|已(改善|惡化)|持續(上升|下降|惡化)|趨勢/, label: "聲稱時序或趨勢" },
+  {
+    /*
+     * 「趨勢」單獨一個詞太寬。實測擋下了「糖化血色素能反映長期血糖趨勢」——
+     * 那是在說這個指標是什麼，沒有對這位病人主張任何時序。
+     *
+     * 這個標記的用途是告訴人「這幾句不可信」，誤報會讓它失去意義（見上方註解），
+     * 所以改成要求真的有時序主張的動詞。
+     */
+    pattern: /最近一次|最新一筆|目前的?數值為|已(改善|惡化)|持續(上升|下降|惡化)|趨勢(顯示|為|是|向)|(呈|有|出現).{0,4}趨勢/,
+    label: "聲稱時序或趨勢",
+  },
   { pattern: /建議(您)?(開始|停用|停止|加|減|換|調整).{0,6}(藥|劑量|治療)|應(停用|加藥|減量)/, label: "處置建議" },
   { pattern: /(診斷為|確診為|罹患了|您(有|患有)).{0,10}(症|病變|症候群)/, label: "推測診斷" },
 ];
@@ -167,6 +177,20 @@ function numeric(raw: string): string | null {
   return match ? String(Number(match[0])) : null;
 }
 
+/*
+ * 模型有時會把清單寫成「- 項目：…」。病人版禁止任何一行以 - * + • ‧ 開頭
+ * （純文字輸出混進標記語法），而那是純呈現問題，內容本身沒有錯——實測一份
+ * 報告因此整份被判成不可使用。
+ *
+ * 只去掉行首的符號，不動任何一個字。去掉之後那一行本身就是完整句子。
+ */
+function stripBullets(text: string): string {
+  return text
+    .split("\n")
+    .map((line) => line.replace(/^\s*[-*+•‧]\s+/, ""))
+    .join("\n");
+}
+
 export function parseLabNarrative(raw: string, facts: PatientFacts): LabNarrativeCheck {
   const trimmed = raw.trim();
   const fenced = trimmed.match(/```(?:json)?\s*([\s\S]*?)```/i);
@@ -182,9 +206,9 @@ export function parseLabNarrative(raw: string, facts: PatientFacts): LabNarrativ
     parsed = JSON.parse(candidate.slice(first, last + 1));
   }
   const record = (parsed ?? {}) as Record<string, unknown>;
-  const narrative = String(record.narrative ?? "").trim();
-  const shortTerm = String(record.short_term ?? "").trim();
-  const midTerm = String(record.mid_term ?? "").trim();
+  const narrative = stripBullets(String(record.narrative ?? "").trim());
+  const shortTerm = stripBullets(String(record.short_term ?? "").trim());
+  const midTerm = stripBullets(String(record.mid_term ?? "").trim());
   // 核實與禁止事項掃描對三段一視同仁。只驗觀察摘要的話，另外兩段等於沒人看，
   // 而短期建議正是最容易滑出「叫病人自行停藥」的一段。
   const allText = [narrative, shortTerm, midTerm].filter(Boolean).join("\n\n");
@@ -211,8 +235,16 @@ export function parseLabNarrative(raw: string, facts: PatientFacts): LabNarrativ
       .replace(/[（）()\[\]｜|、，,。.\s_-]/g, "")
       .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
 
+  /*
+   * 項目名與醫令名都算數。
+   *
+   * 送給模型的好讀文字是依醫令分組呈現的，所以模型引用時常寫醫令名稱
+   * （醣化血紅素）而不是項目名稱（HbA1c）——實測一份完全正確的引用因此
+   * 被判成「找不到來源」。這不是放寬檢查：兩個名稱來自同一筆紀錄，
+   * 數值仍然必須是那一項自己的值。
+   */
   const sourceByItem = facts.labItems.map((item) => ({
-    key: normalise(item.itemName),
+    keys: [item.itemName, ...item.orderNames].map(normalise).filter(Boolean),
     values: new Set(item.rawValues.map(numeric).filter((n): n is string => n !== null)),
   }));
 
@@ -221,7 +253,9 @@ export function parseLabNarrative(raw: string, facts: PatientFacts): LabNarrativ
     if (n === null) return false;
     const key = normalise(item.item);
     if (!key) return true;
-    const owners = sourceByItem.filter((row) => row.key === key || row.key.includes(key) || key.includes(row.key));
+    const owners = sourceByItem.filter((row) =>
+      row.keys.some((name) => name === key || name.includes(key) || key.includes(name)),
+    );
     // 名稱完全找不到，或找得到但那個項目沒有這個數值——兩種都不算核實
     return !owners.some((row) => row.values.has(n));
   });

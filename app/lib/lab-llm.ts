@@ -194,15 +194,17 @@ export function parseLabReview(raw: string, facts: PatientFacts): LabReviewCheck
    * 名稱比對放寬到雙向包含（判讀器常補中文或括號），但不放寬到「任一項目」。
    */
   const normalise = (text: string) => text.toLowerCase().replace(/[（）()\[\]｜|、，,。.\s_-]/g, "");
+  // 項目名與醫令名都算數——好讀文字依醫令分組呈現，模型引用醫令名稱是合理的。
+  // 兩個名稱來自同一筆紀錄，數值仍必須是那一項自己的值。
   const sourceByItem = facts.labItems.map((entry) => ({
-    key: normalise(entry.itemName),
+    keys: [entry.itemName, ...entry.orderNames].map(normalise).filter(Boolean),
     values: new Set(entry.rawValues.map(numeric).filter((n): n is string => n !== null)),
   }));
   const belongsTo = (itemName: string, n: string) => {
     const key = normalise(itemName);
     if (!key) return false;
     return sourceByItem
-      .filter((row) => row.key === key || row.key.includes(key) || key.includes(row.key))
+      .filter((row) => row.keys.some((name) => name === key || name.includes(key) || key.includes(name)))
       .some((row) => row.values.has(n));
   };
 

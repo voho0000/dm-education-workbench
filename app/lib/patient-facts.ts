@@ -54,6 +54,14 @@ export type LabItemFact = {
   itemName: string;
   /** 健保醫令代碼。判定檢體與項目時比名稱可靠得多。 */
   orderCodes: string[];
+  /**
+   * 這一項出現過的醫令名稱。
+   *
+   * 送給模型的好讀文字是**依醫令分組**呈現的，所以模型引用時常常寫醫令名稱
+   * （醣化血紅素）而不是項目名稱（HbA1c）。核對數值時只認項目名稱的話，
+   * 一個完全正確的引用會被判成「找不到來源」——實測就發生過。
+   */
+  orderNames: string[];
   /** 來源出現過的所有原始值，逐字保留、不排序成趨勢 */
   rawValues: string[];
   unit: string | null;
@@ -372,7 +380,7 @@ function isNotAMeasurement(itemName: string): boolean {
 function extractLabs(labs: unknown[]) {
   const byItem = new Map<
     string,
-    { values: string[]; units: Set<string>; refs: Set<string>; months: Set<string>; codes: Set<string> }
+    { values: string[]; units: Set<string>; refs: Set<string>; months: Set<string>; codes: Set<string>; names: Set<string> }
   >();
   let hasDrawDates = false;
 
@@ -398,9 +406,12 @@ function extractLabs(labs: unknown[]) {
       refs: new Set<string>(),
       months: new Set<string>(),
       codes: new Set<string>(),
+      names: new Set<string>(),
     };
     const orderCode = String(record.order_code ?? "").trim();
     if (orderCode) entry.codes.add(orderCode);
+    const orderName = String(record.order_name ?? "").trim();
+    if (orderName && orderName !== itemName) entry.names.add(orderName);
     entry.values.push(value);
     const unit = String(record.unit_data ?? "").trim();
     if (unit && unit !== "null") entry.units.add(unit);
@@ -415,6 +426,7 @@ function extractLabs(labs: unknown[]) {
     .map(([groupKey, entry]) => ({
       itemName: groupKey.split("｜")[0],
       orderCodes: [...entry.codes].sort(),
+      orderNames: [...entry.names].sort(),
       rawValues: entry.values,
       unit: entry.units.size === 1 ? [...entry.units][0] : entry.units.size > 1 ? [...entry.units].join(" / ") : null,
       referenceRange: entry.refs.size ? [...entry.refs][0] : null,

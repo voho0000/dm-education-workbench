@@ -196,7 +196,7 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
   {
     id: "bp-target-intensive",
     typeGate: "type2-confirmed",
-    targetValue: "在病人可承受的情況下可進一步控制至 130/80 mmHg。",
+    targetValue: "低於 130/80 mmHg（需同時注意降壓帶來的併發風險）。",
     category: "bp-target",
     appliesTo: "高心血管疾病風險或已有蛋白尿",
     statement: "血壓進一步控制至 130/80 mmHg 以下；需同時注意降壓帶來的併發風險。",

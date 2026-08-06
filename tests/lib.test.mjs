@@ -3559,3 +3559,102 @@ test("腎功能追蹤頻率依實際 eGFR 分段，且只列一條", () => {
     assert.match(lines[0], expected);
   }
 });
+
+test("targetValue 與 statement 不得講不一樣的門檻", () => {
+  // 醫師版的目標清單讀 targetValue，其他地方讀 statement。改了一邊沒改另一邊，
+  // 同一條規則會在兩份報告裡顯示不同的數字——實測發生過一次（bp-target-intensive）。
+  const numbersIn = (text) => (text.match(/\d+(?:\.\d+)?/g) ?? []).join(",");
+  for (const rule of GUIDELINE_RULES) {
+    if (!rule.targetValue) continue;
+    const inStatement = new Set(rule.statement.match(/\d+(?:\.\d+)?/g) ?? []);
+    for (const n of rule.targetValue.match(/\d+(?:\.\d+)?/g) ?? []) {
+      assert.ok(
+        inStatement.has(n),
+        `${rule.id} 的 targetValue 出現 statement 沒有的數字 ${n}（targetValue：${numbersIn(rule.targetValue)}／statement：${numbersIn(rule.statement)}）`,
+      );
+    }
+  }
+});
+
+test("輸入指紋不得含數字——它會被當成報告裡的檢驗值", () => {
+  // 報告有一項機械檢查是「每個數字都要能在輸入資料中找到」。指紋原本是
+  // 十六進位，裡面的數字被讀成報告數值——實測五份病人全部誤判成驗證失敗。
+  for (const sample of ["病人A", "", "x".repeat(500), JSON.stringify({ a: 1 })]) {
+    assert.ok(!/[0-9]/.test(inputFingerprint(sample)), `指紋含數字：${inputFingerprint(sample)}`);
+    assert.equal(inputFingerprint(sample).length, 12);
+  }
+
+  // 印進報告之後，numbers-supported 不得因為指紋而失敗
+  const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-06", R3: 1 }, rawSources: {} });
+  const plan = resolvePlan(null, facts);
+  const patientText = formatPatientJson({ userInput: { REPORT_DATE: "2026-08-06" }, rawSources: {} });
+  const report = assemblePatientReport(plan, {
+    reportDate: "2026-08-06",
+    dataCutoff: null,
+    inputFingerprint: inputFingerprint("任何輸入"),
+  });
+  const numbers = validateReport({ report, patientText, profile: "modules" }).results.find(
+    (item) => item.id === "numbers-supported",
+  );
+  assert.equal(numbers.passed, true, `指紋讓數字檢查失敗：${JSON.stringify(numbers.violations)}`);
+});
+
+test("模型引用醫令名稱時仍算核實過", () => {
+  // 送給模型的好讀文字依醫令分組呈現（醣化血紅素），項目名卻是 HbA1c。
+  // 只認項目名的話，一個完全正確的引用會被判成找不到來源——實測發生過。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-06" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "11406", order_name: "醣化血紅素", assay_item_name: "HbA1c", assay_value: "6.1", unit_data: "%" },
+        ],
+      },
+    },
+  });
+  const parse = (item, value) =>
+    parseLabNarrative(
+      JSON.stringify({ narrative: `您的${item}為 ${value}。`, cited_values: [{ item, value }] }),
+      facts,
+    ).unverifiedValues;
+
+  assert.deepEqual(parse("醣化血紅素", "6.1 %"), [], "引用醫令名稱應算核實");
+  assert.deepEqual(parse("HbA1c", "6.1"), [], "引用項目名稱應算核實");
+  // 但值錯了還是要擋——放寬的是名稱，不是數值
+  assert.equal(parse("醣化血紅素", "9.9").length, 1, "名稱對但數值不在來源，仍不算核實");
+});
+
+test("解釋指標是什麼不算聲稱趨勢，真的主張時序才算", () => {
+  // 「糖化血色素能反映長期血糖趨勢」是在說這個指標是什麼，沒有對這位病人
+  // 主張任何時序。誤報會讓這個標記失去意義——它的用途是說「這幾句不可信」。
+  const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-06" }, rawSources: {} });
+  const banned = (narrative) =>
+    parseLabNarrative(JSON.stringify({ narrative, cited_values: [] }), facts).bannedPhrases;
+
+  assert.deepEqual(banned("糖化血色素能反映長期血糖趨勢，建議回診時確認是否需要安排檢測。"), []);
+  assert.ok(banned("您的血糖呈上升趨勢。").includes("聲稱時序或趨勢"));
+  assert.ok(banned("趨勢顯示腎功能惡化。").includes("聲稱時序或趨勢"));
+  assert.ok(banned("最近一次的糖化血色素是 8.1。").includes("聲稱時序或趨勢"));
+});
+
+test("模型寫的清單符號會被去掉，因為病人版禁止符號項目符號", () => {
+  // 純呈現問題，內容沒錯，但整份報告會因此判成不可使用。只去行首符號，不動字。
+  const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-06" }, rawSources: {} });
+  const parsed = parseLabNarrative(
+    JSON.stringify({
+      narrative: "您的血脂目標如下：",
+      short_term: "- 每天量血壓\n- 記錄飲食",
+      mid_term: "* 三個月後複查\n+ 回診討論",
+      cited_values: [],
+    }),
+    facts,
+  );
+  assert.equal(parsed.shortTerm, "每天量血壓\n記錄飲食");
+  assert.equal(parsed.midTerm, "三個月後複查\n回診討論");
+  // 句中的減號不能被誤刪（80-130 這種）
+  const kept = parseLabNarrative(
+    JSON.stringify({ narrative: "目標是 80-130 mg/dL。", cited_values: [] }),
+    facts,
+  );
+  assert.match(kept.narrative, /80-130/);
+});
