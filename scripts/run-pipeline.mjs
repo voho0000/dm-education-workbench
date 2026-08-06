@@ -32,6 +32,7 @@ import { GUIDELINE_RULES, formatRules, RULES_VERSION } from "../app/lib/guidelin
 import { LAB_REVIEW_PROMPT, labSectionOf, parseLabReview } from "../app/lib/lab-llm.ts";
 import { LAB_NARRATIVE_PROMPT, buildNarrativeInput, parseLabNarrative } from "../app/lib/lab-narrative.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
+import { formatBatchReview, reviewCase, summarizeBatch } from "../app/lib/batch-review.ts";
 
 function parseArgs(argv) {
   const args = { patients: null, out: null, selector: null, only: null };
@@ -56,6 +57,7 @@ await writeFile(path.join(args.out, "guideline-rules.txt"), formatRules(GUIDELIN
 const today = new Date().toISOString().slice(0, 10);
 const names = (await readdir(args.patients)).filter((n) => n.endsWith(".json")).sort();
 const summary = [];
+const reviews = [];
 
 for (const name of names) {
   const id = name.replace(/\.json$/, "").slice(0, 12);
@@ -140,8 +142,34 @@ for (const name of names) {
   const validation = validateReport({ report: patientReport, patientText: llmText, profile: "modules" });
   const counts = (kind) => plan.decisions.filter((d) => d.kind === kind).length;
 
+  /*
+   * 例外訊號原本只寫在各自那份報告裡。跑三千份時沒有人會逐份打開醫師版，
+   * 等於寫在沒人看的檔案中——稽核提的異議、型別判不出來、某次呼叫失敗，
+   * 全都會靜靜地過去。這裡收成一則紀錄，跑完彙總成一份清單。
+   */
+  const review = reviewCase({
+    id,
+    facts,
+    plan,
+    validation,
+    audit: selection,
+    labReview,
+    labNarrative,
+    llmRequested: Boolean(args.selector),
+  });
+  reviews.push(review);
+  if (review.needsReview) {
+    await writeFile(
+      path.join(dir, "00_需人工檢查.txt"),
+      formatBatchReview([review]),
+      "utf8",
+    );
+  }
+
   summary.push({
     id,
+    needsReview: review.needsReview,
+    flags: review.flags.filter((item) => item.severity !== "note").map((item) => item.code),
     patientChars: [...patientReport].length,
     clinicianChars: [...clinicianReport].length,
     questionMarks: (patientReport.match(/？/g) ?? []).length,
@@ -161,7 +189,7 @@ const padEnd = (v, w) => String(v).padEnd(w);
 
 console.log(`指引門檻表：${GUIDELINE_RULES.length} 條（${RULES_VERSION}），事先抽取，不餵全文\n`);
 console.log(
-  `${padEnd("病人", 14)}${pad("已發生", 7)}${pad("不明", 6)}${pad("預防", 6)}${pad("提醒", 6)}${pad("排除", 6)}${pad("自照護", 7)}${pad("病人版", 8)}${pad("醫師版", 8)}${pad("問句", 6)}${pad("驗證", 7)}`,
+  `${padEnd("病人", 14)}${pad("已發生", 7)}${pad("不明", 6)}${pad("預防", 6)}${pad("提醒", 6)}${pad("排除", 6)}${pad("自照護", 7)}${pad("病人版", 8)}${pad("醫師版", 8)}${pad("問句", 6)}${pad("驗證", 7)}${pad("需檢查", 8)}`,
 );
 for (const r of summary) {
   console.log(
@@ -175,9 +203,26 @@ for (const r of summary) {
       pad(r.patientChars.toLocaleString("en-US"), 8) +
       pad(r.clinicianChars.toLocaleString("en-US"), 8) +
       pad(r.questionMarks, 6) +
-      pad(r.validationScore, 7),
+      pad(r.validationScore, 7) +
+      pad(r.needsReview ? r.flags.join(",").slice(0, 24) : "—", 8),
   );
 }
 
 await writeFile(path.join(args.out, "summary.json"), `${JSON.stringify(summary, null, 2)}\n`, "utf8");
+
+/*
+ * 跑完最重要的一個輸出：接下來要去看哪幾份。
+ *
+ * 只列需要行動的案件——三千份裡有兩千九百份沒事，把它們也印出來會讓真正
+ * 該看的那幾份被埋掉。
+ */
+const batch = summarizeBatch(reviews);
+await writeFile(path.join(args.out, "需人工檢查.txt"), formatBatchReview(reviews), "utf8");
+
+console.log(`\n${batch.total} 份中 ${batch.needsReview} 份需要人看過，${batch.blocking} 份不可直接使用。`);
+for (const row of batch.byCode) {
+  if (row.severity === "note") continue;
+  console.log(`  ${pad(row.cases, 4)} 份　[${row.severity === "blocking" ? "不可使用" : "需看過"}] ${row.code}`);
+}
 console.log(`\n評估包：${args.out}`);
+console.log(`需人工檢查清單：${path.join(args.out, "需人工檢查.txt")}`);

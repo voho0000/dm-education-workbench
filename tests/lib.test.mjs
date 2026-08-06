@@ -28,6 +28,7 @@ import {
 } from "../app/lib/self-care-modules.ts";
 import { resolveTargets } from "../app/lib/resolve-targets.ts";
 import { inputFingerprint } from "../app/lib/fingerprint.ts";
+import { formatBatchReview, reviewCase, summarizeBatch } from "../app/lib/batch-review.ts";
 import { GUIDELINE_RULES, GUIDELINE_SOURCES, RULES_APPROVED, RULES_BY_ID, RULES_VERSION, citationShort, citationText, rulesForType } from "../app/lib/guideline-rules.ts";
 import { compareToTargets } from "../app/lib/target-comparison.ts";
 import {
@@ -3354,4 +3355,128 @@ test("沒有任何臨床訊號的 JSON 要擋下來", () => {
   assert.deepEqual(codesOf({ diagnosisCodes: 5, riskFields: 3, labRecords: 40 }), []);
   // 還沒解析出事實時不做這項判定
   assert.deepEqual(runBlockers(base).map((item) => item.code), []);
+});
+
+// ── 批次例外清單 ────────────────────────────────────────────────
+
+const reviewOf = (id, userInput, rawSources = {}, extra = {}) => {
+  const raw = { userInput: { REPORT_DATE: "2026-08-06", ...userInput }, rawSources };
+  const facts = extractPatientFacts(raw);
+  const plan = resolvePlan(extra.audit ?? null, facts);
+  const llmText = formatPatientJson(raw);
+  const report = assemblePatientReport(plan, {
+    reportDate: "2026-08-06",
+    dataCutoff: null,
+    labNarrative: extra.labNarrative ?? undefined,
+  });
+  return reviewCase({
+    id,
+    facts,
+    plan,
+    validation: validateReport({ report, patientText: llmText, profile: "modules" }),
+    audit: extra.audit ?? null,
+    labReview: extra.labReview ?? null,
+    labNarrative: extra.labNarrative ?? null,
+    llmRequested: extra.llmRequested ?? false,
+  });
+};
+
+const codesOf = (review) => review.flags.map((item) => item.code);
+
+test("沒跑 LLM 時缺少短期建議不算例外，否則整批都會標成不可使用", () => {
+  // 短期建議只由 ③ 產生、沒有程式版替代文字。無 LLM 的批次裡它必然缺席——
+  // 不排除的話三千份會三千份全標紅，清單就等於沒有清單。
+  const withoutLlm = reviewOf("P1", { R2: 2 }, {
+    medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01" }] },
+    labData: { rObject: [{ fee_ym: "11406", assay_item_name: "HbA1c", assay_value: "8.1", unit_data: "%" }] },
+  });
+  assert.ok(!codesOf(withoutLlm).includes("validation-failed"));
+  assert.equal(withoutLlm.needsReview, false, "一份沒有問題的案件不該出現在清單上");
+
+  // 但有跑 LLM 卻缺段就是真的出事，那時候要留著
+  const withLlm = reviewOf("P2", { R2: 2 }, {
+    medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01" }] },
+    labData: { rObject: [{ fee_ym: "11406", assay_item_name: "HbA1c", assay_value: "8.1", unit_data: "%" }] },
+  }, { llmRequested: true });
+  assert.ok(codesOf(withLlm).includes("validation-failed"));
+  assert.ok(codesOf(withLlm).includes("narrative-call-failed"));
+});
+
+test("型別判不出來會進清單，判得出來就不會", () => {
+  // 一次跑三千份時沒有人會逐份打開醫師版，型別判不出來必須有人被告知。
+  const absent = reviewOf("P-無診斷碼", { R3: 1 });
+  assert.ok(codesOf(absent).includes("diabetes-type-undetermined"));
+
+  const conflicting = reviewOf("P-兩型", { R1: 1 }, {
+    medication: {
+      rObject: [
+        { icd_code: "E101", drug_date: "2024-01-01" },
+        { icd_code: "E119", drug_date: "2024-01-01" },
+      ],
+    },
+  });
+  const flag = conflicting.flags.find((item) => item.code === "diabetes-type-undetermined");
+  assert.match(flag.message, /E101/);
+  assert.match(flag.message, /E119/);
+
+  const clear = reviewOf("P-第2型", { R2: 2 }, {
+    medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01" }] },
+    labData: { rObject: [{ fee_ym: "11406", assay_item_name: "HbA1c", assay_value: "8.1", unit_data: "%" }] },
+  });
+  assert.ok(!codesOf(clear).includes("diabetes-type-undetermined"));
+});
+
+test("判讀器抄回來的數字對不上輸入時，視為兩位病人的輸出對調", () => {
+  // 中介檔刻意不寫識別碼，所以放錯資料夾不會有任何症狀。echo 存在的
+  // 唯一理由就是抓這件事，之前是靠肉眼讀出病程對不上才發現的。
+  const audit = parseDataAudit(
+    JSON.stringify({ echo: { age_years: 41, dcsi: 9 }, clinician_notes: [], data_concerns: [], disagreements: [] }),
+  );
+  const mismatch = reviewOf("P-對調", { BIRTHDAY: "1960-01-01", DCSI: 3, R2: 2 }, {}, { audit, llmRequested: true });
+  const flag = mismatch.flags.find((item) => item.code === "echo-mismatch");
+  assert.ok(flag, "年齡與 DCSI 都對不上時必須擋下");
+  assert.equal(flag.severity, "blocking");
+  assert.match(flag.message, /年齡 輸入 66／回抄 41/);
+  assert.match(flag.message, /DCSI 輸入 3／回抄 9/);
+
+  const matching = parseDataAudit(
+    JSON.stringify({ echo: { age_years: 66, dcsi: 3 }, clinician_notes: [], data_concerns: [], disagreements: [] }),
+  );
+  const ok = reviewOf("P-對得上", { BIRTHDAY: "1960-01-01", DCSI: 3, R2: 2 }, {}, { audit: matching, llmRequested: true });
+  assert.ok(!codesOf(ok).includes("echo-mismatch"));
+});
+
+test("稽核異議會進清單——那是它唯一被看到的機會", () => {
+  const audit = parseDataAudit(
+    JSON.stringify({
+      echo: null,
+      clinician_notes: [],
+      data_concerns: [],
+      disagreements: [{ topic: "R2", program_decision: "已發生", your_view: "建議核實" }],
+    }),
+  );
+  const review = reviewOf("P-異議", { R2: 2 }, {}, { audit, llmRequested: true });
+  const flag = review.flags.find((item) => item.code === "audit-disagreement");
+  assert.ok(flag);
+  assert.match(flag.message, /R2/);
+  assert.match(flag.message, /建議核實/);
+});
+
+test("彙總只列需要行動的案件，note 不會讓案件進清單", () => {
+  const clean = reviewOf("P-乾淨", { R2: 2 }, {
+    medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01" }] },
+    labData: { rObject: [{ fee_ym: "11406", assay_item_name: "HbA1c", assay_value: "8.1", unit_data: "%" }] },
+  });
+  // 這份有 undetermined-targets（note），但不該因此需要人看
+  assert.ok(codesOf(clean).includes("undetermined-targets"));
+  assert.equal(clean.needsReview, false);
+
+  const flagged = reviewOf("P-要看", { R3: 1 });
+  const batch = summarizeBatch([clean, flagged]);
+  assert.equal(batch.total, 2);
+  assert.equal(batch.needsReview, 1);
+
+  const text = formatBatchReview([clean, flagged]);
+  assert.ok(text.includes("P-要看"));
+  assert.ok(!text.includes("P-乾淨"), "沒問題的案件不該佔用清單版面");
 });
