@@ -31,9 +31,12 @@ export const FLOW_NODES: FlowNode[] = [
   { id: "rules", x: 16, y: 16, title: "指引門檻表", sub: `${GUIDELINE_RULES.length} 條 · 附章表頁次`, tone: "flowContent" },
   { id: "ingest", x: 262, y: 16, title: "健保申報 JSON", sub: "用藥 · 檢驗 · R/PR · DCSI", tone: "flowNeutral" },
   { id: "decide", x: 16, y: 112, title: "確定性事實與判定", sub: "主題 · 目標 · 門檻（程式）", tone: "flowNeutral" },
-  // 整理與過濾拆成兩格：只畫「濾後」的話，看不出濾掉了什麼、也無從判斷該不該濾。
-  { id: "llmText", x: 508, y: 112, title: "LLM 好讀文字", sub: "整理全部紀錄 · 數值照抄", tone: "flowNeutral" },
-  { id: "labFilter", x: 508, y: 208, title: "濾掉無關檢驗", sub: "微生物 · 血氣 · 白分類…", tone: "flowNeutral" },
+  /*
+   * 整理與送出拆成兩格：只畫送出版的話，看不出被拿掉了什麼、也無從判斷該不該拿。
+   * 兩格的用字要跟頁面上的分頁一致，否則對照時會以為是不同的東西。
+   */
+  { id: "llmText", x: 508, y: 112, title: "整理版（完整）", sub: "逐欄照抄 · 不送出", tone: "flowNeutral" },
+  { id: "labFilter", x: 508, y: 208, title: "送出版", sub: "去識別 · 濾掉無關檢驗", tone: "flowNeutral" },
   { id: "selector", x: 16, y: 304, title: "① 資料稽核", sub: "找矛盾 · 進醫師版", tone: "flowLlm" },
   { id: "labReview", x: 262, y: 304, title: "② 檢驗判讀", sub: "讀原始紀錄", tone: "flowLlm" },
   { id: "narrative", x: 508, y: 304, title: "③ 檢驗敘述", sub: "寫成病人看的段落", tone: "flowLlm" },
