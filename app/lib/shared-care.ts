@@ -97,6 +97,25 @@ export function followUpSchedule(
    * 換表必須在上面幾條去重之後做：去重比對的是第 2 型的 id，先換就對不上，
    * 眼底會同時出現「初次檢查時機」與「後續追蹤頻率」兩條。
    */
+  /*
+   * 足部檢查頻率依 IWGDF 分級（第十五章 2024 更新）。R4 神經病變對應
+   * 保護感覺喪失、R6 周邊血管疾病對應周邊動脈疾病，兩者兼具升到第 2 類。
+   * 這是推估——真正的分級要靠單股纖維壓覺與足部檢查——所以理由裡寫明。
+   */
+  const neuropathy = topics.includes(4);
+  const pad = topics.includes(6);
+  if (neuropathy || pad) {
+    wanted.delete("interval-foot");
+    /*
+     * 也拿掉每年一次的神經病變評估：它問的是同一件事（足部感覺），
+     * 但頻率較寬。兩條並列會變成「每年做一次足部感覺檢查」跟
+     * 「每 6 到 12 個月檢查一次腳」同時出現，病人不知道該聽哪一個。
+     * 這與上面腎臟的處理一致——保留較嚴的那一條。
+     */
+    wanted.delete("interval-neuropathy");
+    wanted.add(neuropathy && pad ? "foot-exam-iwgdf-2" : "foot-exam-iwgdf-1");
+  }
+
   if (options.type1) {
     for (const [t2, t1] of Object.entries(TYPE1_INTERVAL_SWAP)) {
       if (wanted.delete(t2)) wanted.add(t1);
@@ -130,6 +149,8 @@ const SUBJECT: Record<string, string> = {
   "interval-neuropathy": "神經與足部感覺",
   "t1-interval-neuropathy": "神經與足部感覺",
   "interval-foot": "足部循環",
+  "foot-exam-iwgdf-1": "足部檢查（您的資料顯示有神經病變或周邊血管問題）",
+  "foot-exam-iwgdf-2": "足部檢查（您的資料同時顯示神經病變與周邊血管問題）",
   "interval-oral": "口腔",
 };
 

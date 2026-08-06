@@ -21,14 +21,21 @@
  * 醫師照著跳過去會落在隔壁章。改頁次前請先確認手上的檔案是不是這兩份。
  */
 
-export const RULES_VERSION = "2022-guideline-extract-0.5";
+export const RULES_VERSION = "2022-guideline-extract-0.6";
 export const RULES_APPROVED = false;
 
-export type GuidelineSourceId = "t2-2022" | "t1-2022";
+export type GuidelineSourceId = "t2-2022" | "t1-2022" | "t2-ch15-2024";
 
 export const GUIDELINE_SOURCES: Record<GuidelineSourceId, string> = {
   "t2-2022": "中華民國糖尿病學會《2022第2型糖尿病臨床照護指引》",
   "t1-2022": "中華民國糖尿病學會《2022第1型糖尿病臨床照護指引》",
+  /*
+   * 第 2 型指引沒有「更新版全文」，只有三份章節抽換檔。第十五章 4.糖尿病足
+   * 是其中唯一碰到我們既有規則的一份——另外兩份是骨質疏鬆與住院照護，
+   * 前者我們沒有對應模組、後者不在門診申報資料的範圍內。
+   * 頁次指這份 8 頁抽換檔自己的頁次，不是 418 頁全文的頁次。
+   */
+  "t2-ch15-2024": "中華民國糖尿病學會《2022第2型糖尿病臨床照護指引》第十五章 4.糖尿病足（2024 年 6 月更新）",
 };
 
 /** 舊名保留給只需要「主要來源」的地方（例如內容庫的說明文字）。 */
@@ -418,6 +425,33 @@ export const GUIDELINE_RULES: GuidelineRule[] = [
     appliesTo: "有足部潰瘍或感染",
     statement: "轉診至足部照護團隊。",
     citation: { table: "表九 註 5", pdfPage: 18 },
+    patientFacing: true,
+  },
+
+  // ── 足部檢查頻率（第十五章 2024 更新採用 IWGDF 風險分級）──────
+  //
+  // 原本只有「每年一次」一條。2024 更新改成依風險分級決定頻率、一年一次是下限，
+  // 而分級用的正是我們已經有的兩個訊號：保護感覺喪失（對應 R4 神經病變）與
+  // 周邊動脈疾病（對應 R6 周邊血管疾病）。
+  //
+  // 不做第 3 類（潰瘍／截肢病史、末期腎病）：那需要傷口與截肢病史，
+  // 申報資料判不出來，硬猜會把 1–3 個月的高頻追蹤加在不需要的人身上。
+  {
+    id: "foot-exam-iwgdf-1",
+    category: "screening-interval",
+    appliesTo: "有保護感覺喪失或周邊動脈疾病（IWGDF 第 1 類）",
+    statement: "足部檢查頻率為每 6 至 12 個月一次。",
+    patientStatement: "建議每 6 到 12 個月檢查一次腳。",
+    citation: { source: "t2-ch15-2024", table: "表一 IWGDF 糖尿病足潰瘍風險分級", pdfPage: 4 },
+    patientFacing: true,
+  },
+  {
+    id: "foot-exam-iwgdf-2",
+    category: "screening-interval",
+    appliesTo: "保護感覺喪失合併周邊動脈疾病，或其中之一合併足部變形（IWGDF 第 2 類）",
+    statement: "足部檢查頻率為每 3 至 6 個月一次。",
+    patientStatement: "建議每 3 到 6 個月檢查一次腳。",
+    citation: { source: "t2-ch15-2024", table: "表一 IWGDF 糖尿病足潰瘍風險分級", pdfPage: 4 },
     patientFacing: true,
   },
 

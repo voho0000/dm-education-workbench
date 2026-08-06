@@ -2046,8 +2046,10 @@ test("醫師版有依指引的追蹤間隔，且用事實陳述與出處", () =>
   const section = clinician.slice(clinician.indexOf("依指引的追蹤間隔"), clinician.indexOf("需核實的檢驗結果"));
 
   assert.ok(plan.followUp.rules.length > 0);
-  // 醫師版用原本的事實陳述（含檢查技術名稱），病人版才用白話說法
-  assert.match(section, /單股纖維壓覺/);
+  // R4 神經病變 → IWGDF 第 1 類，足檢改成 6–12 個月，取代每年一次的神經評估。
+  // 兩條問的是同一件事（足部感覺），並列會出現兩個互相矛盾的頻率。
+  assert.match(section, /足部檢查頻率為每 6 至 12 個月一次/);
+  assert.ok(!/單股纖維壓覺/.test(section), "較嚴的足檢頻率已涵蓋每年一次的神經評估，不應並列");
   // 每一條都要能追到出處
   for (const line of section.split("\n").filter((l) => /^\s{2}\S/.test(l) && !/^\s*[一二三四五六七]、/.test(l))) {
     assert.match(line, /〔.+p\.\d+〕/, `追蹤間隔缺出處：${line.trim()}`);
@@ -2059,7 +2061,7 @@ test("醫師版有依指引的追蹤間隔，且用事實陳述與出處", () =>
   // 病人版仍是白話說法
   const patient = assemblePatientReport(plan, { reportDate: "2026-08-04", dataCutoff: null });
   assert.ok(!patient.includes("單股纖維壓覺"));
-  assert.match(patient, /建議每年做一次足部感覺檢查/);
+  assert.match(patient, /建議每 6 到 12 個月檢查一次腳/);
 });
 
 test("eGFR 低於 30 給的是指引的轉介建議，不是含糊的「依腎臟科評估」", () => {
@@ -3243,4 +3245,31 @@ test("有蛋白尿的病人也要套加嚴的血壓目標", () => {
 
   const neither = bpOf({ userInput: { REPORT_DATE: "2026-08-06" }, rawSources: {} });
   assert.match(neither.value, /140\/90/);
+});
+
+test("足檢頻率依 IWGDF 分級，且不與每年一次的神經評估並列", () => {
+  // 第十五章 2024 更新把「每年一次」改成依風險分級、一年一次是下限。
+  // R4 神經病變對應保護感覺喪失、R6 周邊血管疾病對應周邊動脈疾病。
+  const footLines = (userInput) =>
+    resolvePlan(null, extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-06", ...userInput }, rawSources: {} }))
+      .followUp.text.split("\n")
+      .filter((line) => /足|神經/.test(line));
+
+  const one = footLines({ R4: 1 });
+  assert.equal(one.length, 1, `足部條目應只有一條：${one.join(" ／ ")}`);
+  assert.match(one[0], /6 到 12 個月/);
+
+  assert.match(footLines({ R6: 1 })[0], /6 到 12 個月/);
+
+  const both = footLines({ R4: 1, R6: 1 });
+  assert.equal(both.length, 1);
+  assert.match(both[0], /3 到 6 個月/);
+
+  // 兩者都沒有就不提足部——不對沒有風險的人加檢查
+  assert.deepEqual(footLines({ R1: 1 }), []);
+
+  // 出處要指向抽換檔，不是 418 頁全文（頁次體系不同）
+  const rule = RULES_BY_ID.get("foot-exam-iwgdf-2");
+  assert.equal(rule.citation.source, "t2-ch15-2024");
+  assert.match(citationText(rule), /第十五章 4\.糖尿病足（2024 年 6 月更新）/);
 });
