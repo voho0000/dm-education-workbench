@@ -51,7 +51,7 @@ import {
   MODULE_CATALOG_VERSION,
 } from "../app/lib/education-modules.ts";
 import { parseLabReview, labSectionOf, LAB_REVIEW_PROMPT } from "../app/lib/lab-llm.ts";
-import { analyteForItemName, evaluateThresholds, extractLabFindings, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
+import { analyteForItemName, evaluateThresholds, extractLabFindings, kidneyLabEvidence, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
 import { parseLabNarrative, formatLabNarrative, LAB_NARRATIVE_PROMPT } from "../app/lib/lab-narrative.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
 import { extractSymbol, extractSymbols } from "../app/lib/source-extract.ts";
@@ -3885,4 +3885,140 @@ test("可發布度的每一項扣分都要說得出原因與下一步", () => {
   assert.ok(readiness.deductions.some((item) => item.code === "content-draft"));
   // 呈現時要講清楚分數的意義
   assert.ok(formatReadiness(readiness).some((line) => line.includes("不代表報告內容一定正確")));
+});
+
+// ── 外部稽核 2026-08-06：回顧性語意與邊界 ──────────────────────
+
+test("metformin 提示是條件式的，不得寫成現在禁用", () => {
+  /*
+   * 這份報告整理最多三年的回顧資料。程式只知道「歷史曾開過 metformin」與
+   * 「歷史曾出現低 eGFR」，證明不了兩者同期，也不知道現在是否仍在用。
+   * 同一份報告一邊說申報用藥不代表目前用藥、一邊寫「屬禁用」，是自相矛盾。
+   */
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-06" },
+    rawSources: {
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2023-01-01", drug_ing_name: "METFORMIN HCL" }] },
+      labData: {
+        rObject: [
+          { order_code: "12015C", assay_item_name: "eGFR", assay_value: "25", unit_data: "ml/min/1.73m2", fee_ym: "11201" },
+          { order_code: "12015C", assay_item_name: "eGFR", assay_value: "72", unit_data: "ml/min/1.73m2", fee_ym: "11406" },
+        ],
+      },
+    },
+  });
+  const hit = evaluateThresholds(extractLabFindings(facts), facts).find((item) => /metformin/i.test(item.code));
+
+  assert.ok(hit, "應該要有 metformin 的核對提示");
+  assert.match(hit.clinicianMessage, /需核對/, "開頭要講「核對」而不是直接下處置");
+  assert.match(hit.clinicianMessage, /無法確認兩者是否同期/);
+  assert.match(hit.clinicianMessage, /是否仍在使用/);
+  // 資料期間要寫出來，讀的人才知道「曾出現」是多久以內的事
+  assert.match(hit.clinicianMessage, /11201–11406/);
+});
+
+test("UACR 剛好 300 要算進巨量，不得兩邊都掉出去", () => {
+  // 原本微量是 30–299、巨量是 >300，純數值 300 誰都不收，完全不觸發。
+  const reasonFor = (value) =>
+    kidneyLabEvidence(
+      extractPatientFacts({
+        userInput: { REPORT_DATE: "2026-08-06" },
+        rawSources: {
+          labData: {
+            rObject: [
+              { order_code: "12021C", assay_item_name: "Albumin/Creatinine Ratio", assay_value: String(value), unit_data: "mg/g", fee_ym: "11406" },
+            ],
+          },
+        },
+      }),
+    ).reason;
+
+  assert.match(reasonFor(299), /30–299/);
+  assert.match(reasonFor(300), /達到或超過 300/, "300 必須算進巨量");
+  assert.match(reasonFor(301), /達到或超過 300/);
+
+  // 觸發後只列符合門檻的值，不得把 150 也一起列進去
+  const mixed = kidneyLabEvidence(
+    extractPatientFacts({
+      userInput: { REPORT_DATE: "2026-08-06" },
+      rawSources: {
+        labData: {
+          rObject: [150, 450].map((v) => ({
+            order_code: "12021C", assay_item_name: "Albumin/Creatinine Ratio", assay_value: String(v), unit_data: "mg/g", fee_ym: "11406",
+          })),
+        },
+      },
+    }),
+  ).reason;
+  assert.match(mixed, /450/);
+  assert.ok(!mixed.includes("150"), `不符門檻的值不得列入：${mixed}`);
+});
+
+test("第 1 型病人不會拿到第 2 型的 eGFR 分層監測規則", () => {
+  // ckdMonitoringRuleId 原本不看型別，回傳的規則 typeGate 是 type2-confirmed，
+  // 第 1 型病人會被規則過濾器濾掉，追蹤時程整條消失。
+  const followUpFor = (icd) =>
+    resolvePlan(
+      null,
+      extractPatientFacts({
+        userInput: { REPORT_DATE: "2026-08-06", R3: 1 },
+        rawSources: {
+          medication: { rObject: [{ icd_code: icd, drug_date: "2024-01-01" }] },
+          labData: {
+            rObject: [{ order_code: "12015C", assay_item_name: "eGFR", assay_value: "38", unit_data: "ml/min/1.73m2", fee_ym: "11406" }],
+          },
+        },
+      }),
+    ).followUp.text.split("\n").filter((line) => /腎/.test(line));
+
+  const t2 = followUpFor("E119");
+  assert.equal(t2.length, 1);
+  assert.match(t2[0], /每 3 個月/, "第 2 型走表二的分段");
+
+  const t1 = followUpFor("E101");
+  assert.equal(t1.length, 1, `第 1 型的腎臟條目不得消失或重複：${t1.join(" ／ ")}`);
+  assert.ok(!/每 3 個月檢查一次腎功能/.test(t1[0]), "第 1 型不得套用第 2 型的分段文字");
+});
+
+test("血色素不得寫成「持續偏低」——沒有採檢日期就分不出持續與同一次事件", () => {
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-06", R3: 1 },
+    rawSources: {
+      labData: {
+        rObject: [9.8, 10.2, 10.5].map((v) => ({
+          fee_ym: "11406", assay_item_name: "Hb", assay_value: String(v), unit_data: "g/dL",
+        })),
+      },
+    },
+  });
+  const messages = evaluateThresholds(extractLabFindings(facts), facts).map((item) => item.clinicianMessage);
+  // 「糖化血色素」也含「血色素」三個字，用它比對會抓到缺檢提示。看轉介那一條。
+  const anemia = messages.find((line) => /血色素/.test(line) && !/糖化血色素/.test(line));
+
+  assert.ok(!messages.some((line) => line.includes("持續偏低")), "不得宣稱持續");
+  if (anemia) assert.match(anemia, /可取得的血色素紀錄皆低於 11|無採檢日期/);
+});
+
+test("病人版敘述的 prompt 不得一邊要求、一邊禁止同一組詞", () => {
+  /*
+   * prompt 原本第一段要模型用「穩定、波動大」當結論詞，後段又禁止這些字。
+   * 五份實跑全部出現波動／穩定，直接原因就是這個矛盾——加了禁令卻沒改掉
+   * 製造違規的那句話。
+   */
+  const banned = ["波動", "起伏", "穩定"];
+  const lines = LAB_NARRATIVE_PROMPT.split("\n");
+  const bans = lines.filter((line) => /不得用/.test(line) && banned.some((w) => line.includes(w)));
+  assert.ok(bans.length > 0, "prompt 必須明文禁止這組詞");
+
+  // 禁令以外的地方不得把這些詞當成建議用語
+  for (const line of lines) {
+    if (bans.includes(line)) continue;
+    if (!/（|(，|、)/.test(line)) continue;
+    for (const word of banned) {
+      assert.ok(
+        !new RegExp(`[（、，]${word}`).test(line),
+        `prompt 一邊禁止一邊示範使用「${word}」：${line.trim().slice(0, 60)}`,
+      );
+    }
+  }
 });

@@ -446,7 +446,14 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
   const kForReferral = get("potassium");
   const naForReferral = get("sodium");
   const coFeatures = [
-    hbForReferral && hbForReferral.max < 11 ? `血色素持續偏低（最高 ${hbForReferral.max} g/dL）` : "",
+    /*
+     * 「持續」超出資料能講的範圍。所有 Hb 都低於 11 也可能是同一次住院重複
+     * 申報的結果——沒有採檢日期就分辨不出「三年都低」與「某週抽了五次」。
+     * 改成陳述可得紀錄本身，不做時間上的推論。
+     */
+    hbForReferral && hbForReferral.max < 11
+      ? `可取得的血色素紀錄皆低於 11（最高 ${hbForReferral.max} g/dL，共 ${hbForReferral.values.length} 筆，無採檢日期）`
+      : "",
     kForReferral && (kForReferral.min < 3.0 || kForReferral.max > 5.5) ? "血鉀異常" : "",
     naForReferral && (naForReferral.min < 130 || naForReferral.max > 150) ? "血鈉異常" : "",
   ].filter(Boolean);
@@ -484,7 +491,23 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
   const usesMetformin =
     facts.medicationIngredients.some((name) => METFORMIN.test(name)) ||
     facts.medicationClasses.some((item) => METFORMIN.test(item.atcClass));
+  /*
+   * 措辭必須是條件式的，不能寫成「現在禁用」或「現在應減量」。
+   *
+   * 這份報告整理的是最多三年的回顧資料。程式知道的只有兩件事：歷史申報中
+   * 曾出現 metformin，以及歷史檢驗中曾出現低 eGFR。它**證明不了**這兩件事
+   * 發生在同一時期，也不知道病人現在是否仍在用。
+   *
+   * 外部審查指出，同一份報告一邊說「申報用藥不代表目前用藥」，一邊又寫
+   * 「此腎功能下 metformin 屬禁用」——後者是把兩個歷史片段接成一個現在式的
+   * 處置指令。指引的門檻本身沒錯，錯的是把它講成已經成立的事實。
+   */
   if (egfr && usesMetformin) {
+    const period = facts.labFeeMonthRange.known
+      ? `資料涵蓋 ${facts.labFeeMonthRange.value.earliest}–${facts.labFeeMonthRange.value.latest}`
+      : "資料期間不明";
+    const caveat = `（歷史申報曾出現 metformin，歷史檢驗曾出現此 eGFR；${period}，無法確認兩者是否同期、也無法確認目前是否仍在使用。若仍在使用，請以最新腎功能核對用藥適切性。）`;
+
     if (egfr.min < 30) {
       const r = rule("metformin-egfr-30");
       hits.push({
@@ -492,7 +515,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
         analyte: "eGFR",
         ruleId: "metformin-egfr-30",
         severity: "urgent",
-        clinicianMessage: `eGFR 曾出現低於 30 的數值（最低 ${egfr.min}）。${r?.statement ?? ""}`,
+        clinicianMessage: `需核對 metformin 與腎功能：eGFR 曾出現低於 30 的數值（最低 ${egfr.min}）。依指引，${r?.statement ?? ""}${caveat}`,
         patientMessage: null,
         citation: r?.citation ?? null,
       });
@@ -503,7 +526,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
         analyte: "eGFR",
         ruleId: "metformin-egfr-30-45",
         severity: "attention",
-        clinicianMessage: `eGFR 曾出現介於 30–45 的數值（${within(egfr, 30, 45)}）。${r?.statement ?? ""}`,
+        clinicianMessage: `需核對 metformin 與腎功能：eGFR 曾出現介於 30–45 的數值（${within(egfr, 30, 45)}）。依指引，${r?.statement ?? ""}${caveat}`,
         patientMessage: null,
         citation: r?.citation ?? null,
       });
@@ -670,6 +693,13 @@ export function ckdMonitoringRuleId(facts: PatientFacts): string | null {
   const egfr = extractLabFindings(facts).find((item) => item.analyte === "eGFR");
   if (!egfr) return null;
   if (egfr.min < 30) return null; // 低於 30 走轉介，不是調整監測頻率
+  /*
+   * 這兩條規則的 typeGate 是 type2-confirmed（出自第 2 型指引表二）。
+   * 第 1 型病人拿到會被規則過濾器濾掉，追蹤時程就少一條——外部審查指出
+   * 這裡沒有看型別。第 1 型指引沒有對應的 eGFR 分層監測表，所以不換規則，
+   * 直接不回傳，讓它退回第 1 型自己的腎臟追蹤條目。
+   */
+  if (facts.diabetesType.verdict === "type1-confirmed") return null;
   if (egfr.min < 45) return "ckd-egfr-30-44";
   if (egfr.min < 60) return "ckd-egfr-45-60";
   return null;
@@ -690,7 +720,14 @@ export function kidneyLabEvidence(facts: PatientFacts): { triggered: boolean; re
         "指引要求先排除非糖尿病引起的腎臟病（尿液紅白血球、白蛋白尿快速增加、eGFR 快速下降、未合併視網膜病變等六項情形），而申報資料判定不了這些；資料也只有費用年月、沒有採檢日期，看不出是單次異常還是持續異常",
     };
   }
-  const macro = uacr?.values.filter((v) => v.value > 300 || (v.value === 300 && v.qualifier === ">="));
+  /*
+   * 300 要算進巨量，不是排除在外。
+   *
+   * 原本寫 `> 300`，只有帶 >= 的 300 才算——結果純數值 300 兩邊都掉出去：
+   * 微量那條是 30–299，巨量那條是 >300，剛好 300 誰都不收，完全不觸發。
+   * 指引的分界是「≥ 300 mg/g」。
+   */
+  const macro = uacr?.values.filter((v) => v.value >= 300);
   if (macro?.length) {
     return {
       triggered: true,

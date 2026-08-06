@@ -123,6 +123,14 @@ export type PatientFacts = {
   medicationDateRange: Maybe<{ earliest: string; latest: string }>;
   labItems: LabItemFact[];
   labRecordCount: number;
+  /**
+   * 檢驗紀錄涵蓋的費用年月起訖。
+   *
+   * 這份報告整理的是最多三年的回顧資料，而所有數值都是全期取最小／最大——
+   * 三年前住院時的單次異常與上個月的門診數值權重相同。報告必須說出實際
+   * 涵蓋哪段期間，讀的人才知道「曾出現」是多久以內的事。
+   */
+  labFeeMonthRange: Maybe<{ earliest: string; latest: string }>;
   labHasDrawDates: boolean;
   /** 抽取過程中偵測到、需要人工注意的資料品質問題 */
   dataQualityFlags: string[];
@@ -538,6 +546,12 @@ export function extractPatientFacts(input: unknown): PatientFacts {
     medicationDateRange: dateRange,
     labItems: items,
     labRecordCount: labs.length,
+    labFeeMonthRange: (() => {
+      const months = [...new Set(items.flatMap((item) => item.feeMonths))].filter(Boolean).sort();
+      return months.length
+        ? known({ earliest: months[0], latest: months[months.length - 1] })
+        : unknown("來源未提供任何費用年月");
+    })(),
     labHasDrawDates: hasDrawDates,
     dataQualityFlags,
   };
