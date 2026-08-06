@@ -21,6 +21,7 @@ import {
 } from "./education-modules.ts";
 import { SELF_CARE_BY_ID, SELF_CARE_VERSION, selectSelfCareModules } from "./self-care-modules.ts";
 import { RULES_VERSION, RULES_SOURCE, RULES_BY_ID, citationShort } from "./guideline-rules.ts";
+import { fingerprintLabel } from "./fingerprint.ts";
 import { resolveTargets, type ResolvedPlanTargets } from "./resolve-targets.ts";
 import type { PatientFacts } from "./patient-facts.ts";
 import { SHARED_CARE_BLOCKS, followUpForClinician, followUpSchedule } from "./shared-care.ts";
@@ -595,6 +596,14 @@ export type AssembleOptions = {
   reportDate: string | null;
   /** 資料的截止日，來自來源的 REPORT_DATE。 */
   dataCutoff: string | null;
+  /**
+   * 產出這份報告時所用輸入的指紋。
+   *
+   * 印在抬頭，讓一份已經印出來的報告事後仍可追回是哪一份輸入——換病人後
+   * 某次呼叫失敗、畫面留著上一位的報告，是這條流程最容易發生也最難察覺
+   * 的錯誤，而兩份報告長得幾乎一樣。
+   */
+  inputFingerprint?: string;
   /** 檢驗判讀器的輸出；未執行時省略。只影響醫師版。 */
   labReview?: LabReviewCheck;
   /**
@@ -645,6 +654,7 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
   lines.push("糖尿病衛教報告");
   lines.push(`報告產生日期：${options.reportDate ?? "未提供"}`);
   lines.push(`資料截至日期：${options.dataCutoff ?? "未提供"}`);
+  if (options.inputFingerprint) lines.push(fingerprintLabel(options.inputFingerprint));
   lines.push("");
 
   const byId = new Map(plan.decisions.map((item) => [item.moduleId, item]));
@@ -908,6 +918,7 @@ export function assembleClinicianReport(plan: ResolvedPlan, facts: PatientFacts,
   lines.push("【AI 醫療人員報告】");
   lines.push(`報告產生日期：${options.reportDate ?? "未提供"}`);
   lines.push(`資料截至日期：${options.dataCutoff ?? "未提供"}`);
+  if (options.inputFingerprint) lines.push(fingerprintLabel(options.inputFingerprint));
   lines.push(`年齡：${facts.ageYears.known ? `${facts.ageYears.value} 歲` : "未提供"}｜性別：${facts.sex.known ? facts.sex.value : "未提供"}｜糖尿病病程：${facts.diabetesDurationYears.known ? `${facts.diabetesDurationYears.value} 年` : "未提供"}`);
   lines.push("");
 

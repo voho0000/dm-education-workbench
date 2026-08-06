@@ -15,6 +15,7 @@ import labNarrativeSource from "./lib/lab-narrative.ts?raw";
 import validateReportSource from "./lib/validate-report.ts?raw";
 import { extractSymbols } from "./lib/source-extract";
 import { hasHardBlocker, runBlockers, type Blocker } from "./lib/blockers";
+import { inputFingerprint } from "./lib/fingerprint";
 import { buildRunInput, type ComposedInput } from "./lib/build-input";
 import { MODULE_CATALOG_VERSION } from "./lib/education-modules";
 import { formatPatientJson } from "./lib/format-patient";
@@ -217,6 +218,14 @@ export default function Home() {
   const [outputTab, setOutputTab] = useState<OutputTab>("patient");
   const [patientReport, setPatientReport] = useState("");
   const [clinicianReport, setClinicianReport] = useState("");
+  /*
+   * 產出這兩份報告時，輸入長什麼樣子。
+   *
+   * 換一份病人資料後按產出、其中一次呼叫失敗，畫面上留著的可能是上一位的
+   * 報告——而兩份報告長得幾乎一樣，肉眼分不出來。存下當時的指紋，之後
+   * 隨時可以跟「現在的輸入」比對。
+   */
+  const [reportFingerprint, setReportFingerprint] = useState("");
   /**
    * 三次呼叫的原始回應，未經解析。
    *
@@ -323,8 +332,23 @@ export default function Home() {
         requiresClientKey: onGitHubPages,
         totalTokens: composed.totalTokens,
         tokenLimit: DEFAULT_INPUT_TOKEN_LIMIT,
+        signals: patientFacts
+          ? {
+              // 事實層沒有「全部診斷碼」這個欄位，只認得出這幾類。
+              // 對這項判定夠用——衛教報告的判定本來就只靠這幾類診斷碼。
+              diagnosisCodes:
+                patientFacts.diabetesType.type1IcdCodes.length +
+                patientFacts.diabetesType.type2IcdCodes.length +
+                patientFacts.diabetesType.otherDiabetesIcdCodes.length +
+                patientFacts.ckdIcdCodes.length,
+              riskFields: [...patientFacts.existingComplications, ...patientFacts.riskPredictions].filter(
+                (item) => item.present,
+              ).length,
+              labRecords: patientFacts.labRecordCount,
+            }
+          : undefined,
       }),
-    [rawInput, parsedRawJson, model, apiKey, onGitHubPages, composed.totalTokens],
+    [rawInput, parsedRawJson, model, apiKey, onGitHubPages, composed.totalTokens, patientFacts],
   );
 
   useEffect(() => {
@@ -342,6 +366,7 @@ export default function Home() {
   function resetOutputs() {
     setPatientReport("");
     setClinicianReport("");
+    setReportFingerprint("");
     setChecks([]);
     setNotice("");
   }
@@ -476,10 +501,13 @@ export default function Home() {
         },
       });
 
+      const fingerprint = inputFingerprint(llmText);
       const options = {
         reportDate: new Date().toISOString().slice(0, 10),
         dataCutoff: patientFacts.dataCutoff.known ? patientFacts.dataCutoff.value : null,
+        inputFingerprint: fingerprint,
       };
+      setReportFingerprint(fingerprint);
       const plan = resolvePlan(audit, patientFacts);
       setPatientReport(assemblePatientReport(plan, { ...options, labNarrative: labNarrative ?? undefined }));
       setClinicianReport(
@@ -1025,6 +1053,21 @@ export default function Home() {
         </div>
 
         <div className="stepBody">
+          {/*
+            換病人後沒有重新產出，畫面上留著的就是上一位的報告——而兩份報告
+            長得幾乎一樣，肉眼分不出來。這裡把「現在的輸入」與「這份報告產生
+            時的輸入」比對，不同就明說。依決定不擋下載，但不能不講。
+          */}
+          {reportFingerprint && llmText && inputFingerprint(llmText) !== reportFingerprint ? (
+            <div className="errorBanner" role="alert">
+              <strong>下面這兩份報告不是目前這份病人資料產生的</strong>
+              <p>
+                目前輸入的指紋是 {inputFingerprint(llmText)}，報告產生時的指紋是 {reportFingerprint}。
+                資料換過了但沒有重新產出，下面顯示的仍是上一份的結果。請重新按「產出兩份報告」，
+                不要直接複製或下載。
+              </p>
+            </div>
+          ) : null}
           <div className="outputHeader">
             <div className="tabs">
               {OUTPUT_TABS.map((item) => (

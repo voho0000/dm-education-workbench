@@ -27,6 +27,7 @@ import {
   selectSelfCareModules,
 } from "../app/lib/self-care-modules.ts";
 import { resolveTargets } from "../app/lib/resolve-targets.ts";
+import { inputFingerprint } from "../app/lib/fingerprint.ts";
 import { GUIDELINE_RULES, GUIDELINE_SOURCES, RULES_APPROVED, RULES_BY_ID, RULES_VERSION, citationShort, citationText, rulesForType } from "../app/lib/guideline-rules.ts";
 import { compareToTargets } from "../app/lib/target-comparison.ts";
 import {
@@ -1685,9 +1686,10 @@ test("所有引用的 ruleId 都要能在規則表中解出", () => {
   }
 });
 
-test("檢驗判讀器的輸入含性別與生日，但不含用藥", () => {
+test("檢驗判讀器的輸入含性別與年齡，但不含用藥與生日", () => {
   // 這批資料的參考值是分層的（[≧18y]M 4-5.52 F 3.78-4.99）。
   // 不給年齡性別就選不出該用哪一段，而 prompt 又要求它選。
+  // 「≧18y」要的正是年齡，不是生日——所以送年齡就夠，生日不外送。
   const text = formatPatientJson({
     userInfo: { gender: "M", birthday: "1949-03-08" },
     userInput: { REPORT_DATE: "2026-08-03", R2: 2 },
@@ -1702,7 +1704,8 @@ test("檢驗判讀器的輸入含性別與生日，但不含用藥", () => {
   });
   const section = labSectionOf(text);
   assert.match(section, /gender：M/, "判讀器必須知道性別，否則選不出參考值分段");
-  assert.match(section, /birthday：1949-03-08/);
+  assert.match(section, /年齡：77 歲/, "分層參考值要的是年齡");
+  assert.ok(!section.includes("1949"), "生日不外送");
   assert.match(section, /【檢驗與檢查紀錄】/);
   // 用藥不進去：藥物安全連動已由規則表確定性處理，且申報用藥可能停在兩年前
   assert.ok(!section.includes("【用藥紀錄】"), "用藥段不得進入檢驗判讀器");
@@ -3272,4 +3275,83 @@ test("足檢頻率依 IWGDF 分級，且不與每年一次的神經評估並列"
   const rule = RULES_BY_ID.get("foot-exam-iwgdf-2");
   assert.equal(rule.citation.source, "t2-ch15-2024");
   assert.match(citationText(rule), /第十五章 4\.糖尿病足（2024 年 6 月更新）/);
+});
+
+// ── 送出前的去識別、輸入指紋、空檔阻擋 ────────────────────────────
+
+test("送給模型的文字不帶 userId，生日換算成年齡", () => {
+  // userId 對判定毫無用處，卻是最直接的識別欄位。生日只在算年齡時有用，
+  // 而指引的高齡放寬看的是年齡——保留完整生日等於白送一個準識別欄位給第三方。
+  const text = formatPatientJson({
+    downloadType: "DiabetesEducation",
+    userInfo: { userId: "AB1234567", gender: "F", birthday: "1960/01/01" },
+    userInput: { REPORT_DATE: "2026-08-06", BIRTHDAY: "1960/01/01", DCSI: 3 },
+    rawSources: {},
+  });
+
+  assert.ok(!text.includes("AB1234567"), "userId 不得外送");
+  assert.ok(!/1960/.test(text), "生日不得外送（userInfo 與 userInput 兩處都要換）");
+  assert.match(text, /年齡：66 歲/);
+  assert.match(text, /AGE（年齡，由 BIRTHDAY 換算）：66 歲/);
+  // 性別要留著——HDL 目標分男女
+  assert.match(text, /gender：F/);
+});
+
+test("生日或報告日期缺漏時說無法換算，不是靜默省略", () => {
+  const text = formatPatientJson({
+    downloadType: "DiabetesEducation",
+    userInfo: { userId: "X", birthday: "" },
+    userInput: { REPORT_DATE: "2026-08-06" },
+    rawSources: {},
+  });
+  assert.match(text, /年齡：無法換算/);
+});
+
+test("輸入指紋能分辨不同輸入，也印進報告抬頭", () => {
+  // 換病人後某次呼叫失敗、畫面留著上一位的報告，是這條流程最容易發生
+  // 也最難察覺的錯誤——兩份報告長得幾乎一樣。
+  assert.notEqual(inputFingerprint("病人A"), inputFingerprint("病人B"));
+  assert.equal(inputFingerprint("病人A"), inputFingerprint("病人A"));
+  assert.equal(inputFingerprint("").length, 12, "空輸入也要有指紋，否則「沒有輸入」與「指紋相同」分不出來");
+
+  const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-06", R3: 1 }, rawSources: {} });
+  const plan = resolvePlan(null, facts);
+  const fp = inputFingerprint("某份輸入");
+  const patient = assemblePatientReport(plan, { reportDate: "2026-08-06", dataCutoff: null, inputFingerprint: fp });
+  const clinician = assembleClinicianReport(plan, facts, { reportDate: "2026-08-06", dataCutoff: null, inputFingerprint: fp });
+  assert.ok(patient.includes(`輸入指紋 ${fp}`), "病人版抬頭要有指紋");
+  assert.ok(clinician.includes(`輸入指紋 ${fp}`), "醫師版抬頭要有指紋");
+
+  // 沒給就不印，不要留一行空的「輸入指紋」
+  assert.ok(!assemblePatientReport(plan, { reportDate: "2026-08-06", dataCutoff: null }).includes("輸入指紋"));
+});
+
+test("沒有任何臨床訊號的 JSON 要擋下來", () => {
+  // 空物件 {} 是合法 JSON，而它會組出一份 1,900 字、看起來完全正常的報告。
+  const base = {
+    rawInput: "{}",
+    parsedJson: true,
+    model: "gemini-3.6-flash",
+    apiKey: "x",
+    requiresClientKey: false,
+    totalTokens: 10,
+    tokenLimit: 1000,
+  };
+  const codesOf = (signals) => runBlockers({ ...base, signals }).map((item) => item.code);
+
+  assert.ok(hasHardBlocker(runBlockers({ ...base, signals: { diagnosisCodes: 0, riskFields: 0, labRecords: 0 } })));
+
+  // 門檻在「三種訊號全空」，不是「一定要有診斷碼」——真實匯出可能缺 ICD
+  // 卻有檢驗值，把那種病人擋掉比放行空檔更糟。
+  for (const signals of [
+    { diagnosisCodes: 0, riskFields: 0, labRecords: 40 },
+    { diagnosisCodes: 0, riskFields: 3, labRecords: 0 },
+  ]) {
+    assert.ok(!hasHardBlocker(runBlockers({ ...base, signals })), `不該擋：${JSON.stringify(signals)}`);
+    assert.ok(codesOf(signals).includes("no-diagnosis-code"), "缺診斷碼仍要提醒");
+  }
+
+  assert.deepEqual(codesOf({ diagnosisCodes: 5, riskFields: 3, labRecords: 40 }), []);
+  // 還沒解析出事實時不做這項判定
+  assert.deepEqual(runBlockers(base).map((item) => item.code), []);
 });

@@ -173,6 +173,34 @@ export type FormatOptions = {
   skipIrrelevantLabs?: boolean;
 };
 
+
+/*
+ * 送去 Gemini 的文字不帶直接識別資訊。
+ *
+ * userId 整個拿掉——它對判定毫無用處，卻是最直接的識別欄位。
+ * 生日換算成年齡：指引的高齡放寬看的是年齡，不是生日；保留完整生日
+ * 等於把一個準識別欄位送到第三方服務，而換算後判定結果一模一樣。
+ *
+ * 這一段刻意違反本檔「保留來源原值」的通則，因為那個通則的目的是
+ * 不要竄改臨床內容，而不是把識別資訊原封不動往外送。
+ */
+const DROP_KEYS = /^(userId|user_id|patientId|patient_id|idNo|id_no|身分證)$/i;
+const BIRTHDAY_KEYS = /^(birthday|BIRTHDAY|birthDate|dob)$/i;
+
+function ageFrom(birthday: unknown, reportDate: unknown): string | null {
+  const parse = (raw: unknown) => {
+    const text = typeof raw === "string" ? raw.trim().replace(/\//g, "-") : "";
+    const m = /^(\d{4})-(\d{1,2})-(\d{1,2})$/.exec(text);
+    return m ? { y: Number(m[1]), m: Number(m[2]), d: Number(m[3]) } : null;
+  };
+  const born = parse(birthday);
+  const at = parse(reportDate);
+  if (!born || !at) return null;
+  let age = at.y - born.y;
+  if (at.m < born.m || (at.m === born.m && at.d < born.d)) age -= 1;
+  return age >= 0 && age < 130 ? String(age) : null;
+}
+
 export function formatPatientJson(value: unknown, options: FormatOptions = {}): string {
   const skipIrrelevant = options.skipIrrelevantLabs ?? true;
   if (!isRecord(value)) {
@@ -201,13 +229,29 @@ export function formatPatientJson(value: unknown, options: FormatOptions = {}): 
   const userInput = isRecord(value.userInput) ? value.userInput : {};
   const rawSources = isRecord(value.rawSources) ? value.rawSources : {};
 
-  for (const [key, item] of Object.entries(userInfo)) lines.push(`${key}：${clean(item)}`);
+  const reportDate = userInput.REPORT_DATE;
+  for (const [key, item] of Object.entries(userInfo)) {
+    if (DROP_KEYS.test(key)) continue;
+    if (BIRTHDAY_KEYS.test(key)) {
+      const age = ageFrom(item, reportDate);
+      lines.push(age ? `年齡：${age} 歲（由生日換算，原始生日不外送）` : "年齡：無法換算（來源生日或報告日期缺漏）");
+      continue;
+    }
+    lines.push(`${key}：${clean(item)}`);
+  }
 
   lines.push("", "【來源模型欄位】", "以下保留來源原值；未提供不等同於0。");
   const userInputKeys = Object.keys(userInput).sort(compareUserInputKeys);
   if (!userInputKeys.length) lines.push("未提供來源模型欄位。");
   for (const key of userInputKeys) {
+    if (DROP_KEYS.test(key)) continue;
     const label = USER_INPUT_LABELS[key] ? `（${USER_INPUT_LABELS[key]}）` : "";
+    if (BIRTHDAY_KEYS.test(key)) {
+      // userInput 也帶一份生日。只換掉 userInfo 那份等於沒去識別。
+      const age = ageFrom(userInput[key], reportDate);
+      lines.push(age ? `AGE（年齡，由 ${key} 換算）：${age} 歲` : `AGE（年齡）：無法換算（${key} 或 REPORT_DATE 缺漏）`);
+      continue;
+    }
     lines.push(`${key}${label}：${clean(userInput[key])}`);
   }
 

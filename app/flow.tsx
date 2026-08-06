@@ -1,5 +1,7 @@
 "use client";
 
+import { GUIDELINE_RULES } from "./lib/guideline-rules";
+
 /**
  * 資料流圖。畫的是實際的資料流——每個方框都對應一個函式或一次呼叫。
  *
@@ -25,7 +27,8 @@ const H = 48;
  * 三次呼叫是並行的，所以擺同一列；上下相鄰的兩列才代表先後。
  */
 export const FLOW_NODES: FlowNode[] = [
-  { id: "rules", x: 16, y: 16, title: "指引門檻表", sub: "35 條 · 附章表頁次", tone: "flowContent" },
+  // 條數從規則表本身數，寫死會過期——加了第 1 型的 16 條之後這裡還停在 35。
+  { id: "rules", x: 16, y: 16, title: "指引門檻表", sub: `${GUIDELINE_RULES.length} 條 · 附章表頁次`, tone: "flowContent" },
   { id: "ingest", x: 262, y: 16, title: "健保申報 JSON", sub: "用藥 · 檢驗 · R/PR · DCSI", tone: "flowNeutral" },
   { id: "decide", x: 16, y: 112, title: "確定性事實與判定", sub: "主題 · 目標 · 門檻（程式）", tone: "flowNeutral" },
   // 整理與過濾拆成兩格：只畫「濾後」的話，看不出濾掉了什麼、也無從判斷該不該濾。
