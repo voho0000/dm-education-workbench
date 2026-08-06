@@ -30,6 +30,7 @@ import {
   describeRangeForClinician,
   evaluateThresholds,
   extractLabFindings,
+  ckdMonitoringRuleId,
   kidneyLabEvidence,
   lowestMeasuredGlucose,
   type Analyte,
@@ -549,6 +550,7 @@ export function resolvePlan(audit: DataAudit | null, facts: PatientFacts): Resol
     followUp: followUpSchedule(includedTopics, {
       kidneyIntensive: labThresholds.some((hit) => hit.code === "kidney-intensive-followup"),
           type1: facts.diabetesType.verdict === "type1-confirmed",
+          ckdMonitoringRuleId: ckdMonitoringRuleId(facts),
     }),
     urgentSigns,
   };

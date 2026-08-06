@@ -695,8 +695,10 @@ test("追蹤時程不得同時出現互相矛盾的腎臟間隔", () => {
   });
   const plan = resolvePlan(null, withAbnormal);
   const text = plan.followUp.text;
-  assert.match(text, /至少每半年/, "已達門檻時應列出加密追蹤");
+  // eGFR 34.6 落在表二的 30–44 分段：每 3 個月，比籠統的「每 3–6 個月」更嚴也更具體。
+  assert.match(text, /每 3 個月檢查一次腎功能/, "有實際 eGFR 時應用分段的頻率");
   assert.ok(!/肌酸酐、eGFR、尿液常規與白蛋白尿建議每年檢查一次/.test(text), "不應同時保留每年的一般間隔");
+  assert.ok(!/至少每半年/.test(text), "分段頻率已取代加密追蹤，兩者並列會出現兩個數字");
 
   const normal = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-03", R3: 2 }, rawSources: T2 });
   const plainText = resolvePlan(null, normal).followUp.text;
@@ -2059,8 +2061,9 @@ test("醫師版有依指引的追蹤間隔，且用事實陳述與出處", () =>
   for (const line of section.split("\n").filter((l) => /^\s{2}\S/.test(l) && !/^\s*[一二三四五六七]、/.test(l))) {
     assert.match(line, /〔.+p\.\d+〕/, `追蹤間隔缺出處：${line.trim()}`);
   }
-  // statement 沒有主詞的才補，有主詞的不重述
-  assert.match(section, /腎功能與尿液白蛋白：至少每半年/);
+  // eGFR 34.6 → 表二 30–44 分段。statement 自帶主詞（「每 3 個月測一次 eGFR」），不重述。
+  assert.match(section, /每 3 個月測一次 eGFR/);
+  assert.match(section, /表二 CKD 糖尿病人之處置，p\.199/);
   assert.ok(!/腎功能與尿液白蛋白：肌酸酐/.test(section));
 
   // 病人版仍是白話說法
@@ -3532,4 +3535,27 @@ test("送出去的一律是去識別版，不是頁面上顯示的完整版", ()
     !/composeInput[\s\S]{0,400}llmTextVerbatim/.test(source),
     "完整版含 userId 與生日，不得進入送出內容",
   );
+});
+
+test("腎功能追蹤頻率依實際 eGFR 分段，且只列一條", () => {
+  // 指引表二對 eGFR 45–60 與 30–44 的建議差三倍頻率，原本兩位病人
+  // 拿到的是同一句「每 3–6 個月」。三條並列會出現三個數字，病人不知道聽哪個。
+  const kidneyLines = (egfr, uacr) => {
+    const rows = [];
+    if (egfr) rows.push({ order_code: "12015C", assay_item_name: "eGFR", assay_value: egfr, unit_data: "ml/min/1.73m2", fee_ym: "11406" });
+    if (uacr) rows.push({ order_code: "12021C", assay_item_name: "Albumin/Creatinine Ratio", assay_value: uacr, unit_data: "mg/g", fee_ym: "11406" });
+    const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-06", R3: 1 }, rawSources: { labData: { rObject: rows } } });
+    return resolvePlan(null, facts).followUp.text.split("\n").filter((line) => /腎/.test(line));
+  };
+
+  for (const [egfr, uacr, expected] of [
+    ["55", null, /每 6 個月/],
+    ["32", null, /每 3 個月/],
+    ["75", "450", /至少每半年/],
+    ["75", null, /每年檢查一次/],
+  ]) {
+    const lines = kidneyLines(egfr, uacr);
+    assert.equal(lines.length, 1, `eGFR ${egfr} 的腎臟條目應只有一條：${lines.join(" ／ ")}`);
+    assert.match(lines[0], expected);
+  }
 });

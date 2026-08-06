@@ -91,7 +91,7 @@ const BASE_INTERVAL_RULES = [
  */
 export function followUpSchedule(
   topics: number[],
-  options: { kidneyIntensive?: boolean; type1?: boolean } = {},
+  options: { kidneyIntensive?: boolean; type1?: boolean; ckdMonitoringRuleId?: string | null } = {},
 ): { rules: GuidelineRule[]; text: string } {
   const wanted = new Set<string>(BASE_INTERVAL_RULES);
   for (const topic of topics) {
@@ -102,6 +102,21 @@ export function followUpSchedule(
   if (!options.kidneyIntensive) wanted.delete("kidney-intensive-followup");
   // 一般腎臟間隔與加密追蹤同時出現會互相矛盾（每年 vs 每半年），保留較嚴的那一條。
   if (wanted.has("kidney-intensive-followup")) wanted.delete("interval-kidney");
+
+  /*
+   * 有實際 eGFR 落在表二的分段時，用分段的頻率取代上面兩條。
+   *
+   * 分段講的是同一件事但更具體：eGFR 45–60 每 6 個月、30–44 每 3 個月。
+   * 原本對這兩位病人講的是同一句「每 3–6 個月」，而指引對他們的建議差
+   * 三倍頻率。三條並列會出現三個不同的數字，病人不知道該聽哪一個。
+   *
+   * UACR 超標但 eGFR 正常的人不會有分段規則，加密追蹤照樣留著。
+   */
+  if (options.ckdMonitoringRuleId) {
+    wanted.delete("interval-kidney");
+    wanted.delete("kidney-intensive-followup");
+    wanted.add(options.ckdMonitoringRuleId);
+  }
   // 眼底追蹤頻率是眼底檢查的細化，兩條並列會重複。
   if (wanted.has("interval-retina-followup")) wanted.delete("interval-eye");
 
@@ -158,6 +173,8 @@ const SUBJECT: Record<string, string> = {
   "interval-kidney": "腎功能與尿液檢查",
   "t1-interval-kidney": "腎功能與尿液檢查",
   "kidney-intensive-followup": "腎功能與尿液檢查（您的檢查結果顯示需要加強追蹤）",
+  "ckd-egfr-45-60": "腎功能（依您的 eGFR 分段）",
+  "ckd-egfr-30-44": "腎功能（依您的 eGFR 分段）",
   "t1-kidney-twice-yearly": "腎功能與尿液檢查（您的檢查結果顯示需要加強追蹤）",
   "interval-eye": "眼底",
   "t1-interval-eye": "眼底",
