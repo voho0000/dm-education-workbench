@@ -1,0 +1,1331 @@
+<title>糖尿病衛教報告產生器：邏輯逐步說明</title>
+
+<style>
+  :root {
+    --paper: #eef1ec;
+    --card: #f7f9f6;
+    --ink: #16211d;
+    --ink-soft: #4a5651;
+    --ink-faint: #7c8781;
+    --rule: #ccd4cb;
+    --rule-soft: #dde3db;
+    --det: #1d5c46;
+    --det-wash: #dfeae4;
+    --llm: #4a4b9e;
+    --llm-wash: #e3e3f2;
+    --flag: #a3352a;
+    --flag-wash: #f3e0dd;
+
+    --serif: "Songti TC", "Noto Serif TC", "Source Han Serif TC", "Source Han Serif TW", "MingLiU", Georgia, serif;
+    --sans: "PingFang TC", "Noto Sans TC", "Source Han Sans TC", "Microsoft JhengHei", system-ui, -apple-system, sans-serif;
+    --mono: ui-monospace, "SF Mono", "Menlo", "Consolas", "Roboto Mono", monospace;
+  }
+
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --paper: #111614;
+      --card: #171d1a;
+      --ink: #e3e9e4;
+      --ink-soft: #a3aea8;
+      --ink-faint: #78827c;
+      --rule: #2c3630;
+      --rule-soft: #232b27;
+      --det: #74c4a4;
+      --det-wash: #163026;
+      --llm: #9fa0e6;
+      --llm-wash: #21224a;
+      --flag: #e58c81;
+      --flag-wash: #3a1f1c;
+    }
+  }
+
+  :root[data-theme="dark"] {
+    --paper: #111614;
+    --card: #171d1a;
+    --ink: #e3e9e4;
+    --ink-soft: #a3aea8;
+    --ink-faint: #78827c;
+    --rule: #2c3630;
+    --rule-soft: #232b27;
+    --det: #74c4a4;
+    --det-wash: #163026;
+    --llm: #9fa0e6;
+    --llm-wash: #21224a;
+    --flag: #e58c81;
+    --flag-wash: #3a1f1c;
+  }
+
+  :root[data-theme="light"] {
+    --paper: #eef1ec;
+    --card: #f7f9f6;
+    --ink: #16211d;
+    --ink-soft: #4a5651;
+    --ink-faint: #7c8781;
+    --rule: #ccd4cb;
+    --rule-soft: #dde3db;
+    --det: #1d5c46;
+    --det-wash: #dfeae4;
+    --llm: #4a4b9e;
+    --llm-wash: #e3e3f2;
+    --flag: #a3352a;
+    --flag-wash: #f3e0dd;
+  }
+
+  * { box-sizing: border-box; }
+
+  body {
+    margin: 0;
+    background: var(--paper);
+    color: var(--ink);
+    font-family: var(--sans);
+    font-size: 16px;
+    line-height: 1.85;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  .wrap {
+    max-width: 940px;
+    margin: 0 auto;
+    padding: 56px 24px 120px;
+  }
+
+  /* ── 抬頭：檢驗單的表頭 ───────────────────────────── */
+
+  .masthead { border-top: 3px solid var(--ink); padding-top: 18px; }
+
+  .masthead .kicker {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.18em;
+    color: var(--ink-faint);
+    margin: 0 0 14px;
+  }
+
+  h1 {
+    font-family: var(--serif);
+    font-size: clamp(30px, 5vw, 46px);
+    line-height: 1.25;
+    font-weight: 700;
+    margin: 0 0 18px;
+    text-wrap: balance;
+    letter-spacing: 0.01em;
+  }
+
+  .standfirst {
+    font-size: 17px;
+    color: var(--ink-soft);
+    max-width: 62ch;
+    margin: 0 0 26px;
+  }
+
+  .meta {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+    gap: 1px;
+    background: var(--rule);
+    border: 1px solid var(--rule);
+    margin-bottom: 40px;
+  }
+
+  .meta div { background: var(--card); padding: 10px 14px; }
+
+  .meta dt {
+    font-family: var(--mono);
+    font-size: 10px;
+    letter-spacing: 0.12em;
+    color: var(--ink-faint);
+    margin: 0 0 3px;
+  }
+
+  .meta dd {
+    margin: 0;
+    font-family: var(--mono);
+    font-size: 13px;
+    font-variant-numeric: tabular-nums;
+  }
+
+  /* ── 色票圖例：全篇最重要的一個區分 ─────────────────── */
+
+  .legend {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 8px 22px;
+    padding: 16px 18px;
+    background: var(--card);
+    border: 1px solid var(--rule);
+    border-left: 3px solid var(--ink);
+    margin-bottom: 44px;
+    font-size: 14px;
+  }
+
+  .legend p { margin: 0 0 4px; width: 100%; color: var(--ink-soft); }
+
+  .swatch {
+    display: inline-flex;
+    align-items: baseline;
+    gap: 8px;
+    font-family: var(--mono);
+    font-size: 12.5px;
+  }
+
+  .swatch::before {
+    content: "";
+    width: 11px;
+    height: 11px;
+    flex: none;
+    transform: translateY(1px);
+  }
+
+  .swatch.det::before { background: var(--det); }
+  .swatch.llm::before { background: var(--llm); }
+  .swatch.flag::before { background: var(--flag); }
+
+  /* ── 章節 ─────────────────────────────────────── */
+
+  section { margin-bottom: 58px; }
+
+  h2 {
+    font-family: var(--serif);
+    font-size: 25px;
+    font-weight: 700;
+    margin: 0 0 6px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--ink);
+    text-wrap: balance;
+  }
+
+  .sectionNote {
+    color: var(--ink-soft);
+    font-size: 15px;
+    max-width: 64ch;
+    margin: 14px 0 26px;
+  }
+
+  h3 {
+    font-family: var(--sans);
+    font-size: 16px;
+    font-weight: 600;
+    margin: 30px 0 10px;
+  }
+
+  p { margin: 0 0 14px; max-width: 66ch; }
+
+  a { color: var(--det); text-decoration-thickness: 1px; text-underline-offset: 3px; }
+  a:focus-visible { outline: 2px solid var(--llm); outline-offset: 3px; }
+
+  code {
+    font-family: var(--mono);
+    font-size: 0.88em;
+    background: var(--rule-soft);
+    padding: 1px 5px;
+    border-radius: 2px;
+  }
+
+
+  /* ── 資料流圖：與線上工作台同一張，配色換成本頁的色票 ─────── */
+
+  .flowWrap {
+    border: 1px solid var(--rule);
+    background: var(--card);
+    padding: 20px 18px;
+    margin-bottom: 16px;
+    overflow-x: auto;
+  }
+
+  .flowDiagram { width: 100%; min-width: 560px; height: auto; color: var(--ink-faint); }
+  .flowDiagram rect { stroke-width: 1.2; }
+  .flowNeutral rect { fill: color-mix(in srgb, var(--ink) 5%, transparent); stroke: var(--rule); }
+  .flowLlm rect { fill: var(--llm-wash); stroke: var(--llm); }
+  .flowOut rect { fill: var(--det-wash); stroke: var(--det); }
+  .flowContent rect {
+    fill: color-mix(in srgb, var(--flag) 7%, transparent);
+    stroke: var(--flag);
+    stroke-dasharray: 4, 3;
+  }
+  .flowTitle { font-size: 13px; font-weight: 700; fill: var(--ink); font-family: var(--sans); }
+  .flowSub { font-size: 11px; fill: var(--ink-soft); font-family: var(--sans); }
+  .flowLine path { fill: none; stroke: var(--ink-faint); stroke-width: 1.4; }
+
+  .flowKey {
+    display: flex;
+    flex-wrap: wrap;
+    gap: 6px 20px;
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-soft);
+    margin: 0 0 16px;
+    max-width: none;
+  }
+
+  .flowKey span { display: inline-flex; align-items: baseline; gap: 7px; }
+  .flowKey span::before { content: ""; width: 11px; height: 11px; flex: none; transform: translateY(1px); border: 1px solid; }
+  .flowKey .k-neutral::before { background: color-mix(in srgb, var(--ink) 5%, transparent); border-color: var(--rule); }
+  .flowKey .k-llm::before { background: var(--llm-wash); border-color: var(--llm); }
+  .flowKey .k-out::before { background: var(--det-wash); border-color: var(--det); }
+  .flowKey .k-content::before { background: color-mix(in srgb, var(--flag) 7%, transparent); border-color: var(--flag); border-style: dashed; }
+
+  /* ── 管線步驟：左側編號脊柱 ─────────────────────── */
+
+  .steps { display: flex; flex-direction: column; gap: 2px; }
+
+  .step {
+    display: grid;
+    grid-template-columns: 62px 1fr;
+    background: var(--card);
+    border: 1px solid var(--rule);
+  }
+
+  .stepNum {
+    font-family: var(--mono);
+    font-size: 15px;
+    font-variant-numeric: tabular-nums;
+    display: flex;
+    flex-direction: column;
+    align-items: center;
+    padding: 18px 0;
+    gap: 8px;
+    border-right: 1px solid var(--rule);
+    color: var(--ink-faint);
+  }
+
+  .stepNum .dot { width: 9px; height: 9px; flex: none; }
+  .stepNum.det .dot { background: var(--det); }
+  .stepNum.llm .dot { background: var(--llm); }
+  .stepNum .spine { flex: 1; width: 1px; background: var(--rule); min-height: 12px; }
+
+  .stepBody { padding: 18px 22px 20px; min-width: 0; }
+
+  .stepTitle {
+    font-family: var(--sans);
+    font-size: 17px;
+    font-weight: 600;
+    margin: 0 0 4px;
+  }
+
+  .stepWho {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.08em;
+    margin: 0 0 14px;
+  }
+
+  .stepWho.det { color: var(--det); }
+  .stepWho.llm { color: var(--llm); }
+
+  .fields { display: grid; grid-template-columns: 76px 1fr; gap: 7px 16px; font-size: 14.5px; }
+
+  .fields dt {
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--ink-faint);
+    text-align: right;
+    padding-top: 4px;
+  }
+
+  .fields dd { margin: 0; min-width: 0; }
+  .fields dd p { margin: 0 0 6px; max-width: none; }
+  .fields dd p:last-child { margin-bottom: 0; }
+
+  .limit { color: var(--flag); }
+
+  /* ── 表格 ─────────────────────────────────────── */
+
+  .tableWrap { overflow-x: auto; border: 1px solid var(--rule); margin-bottom: 18px; }
+
+  table { border-collapse: collapse; width: 100%; font-size: 14px; background: var(--card); }
+
+  th, td {
+    text-align: left;
+    padding: 9px 14px;
+    border-bottom: 1px solid var(--rule-soft);
+    vertical-align: top;
+  }
+
+  thead th {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.1em;
+    color: var(--ink-faint);
+    border-bottom: 1px solid var(--rule);
+    white-space: nowrap;
+    font-weight: 400;
+  }
+
+  tbody tr:last-child td { border-bottom: 0; }
+
+  td.num, td.mono { font-family: var(--mono); font-variant-numeric: tabular-nums; white-space: nowrap; }
+
+  /* ── 狀態籤 ───────────────────────────────────── */
+
+  .chip {
+    display: inline-block;
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.06em;
+    padding: 2px 7px;
+    border: 1px solid currentColor;
+    white-space: nowrap;
+  }
+
+  .chip.det { color: var(--det); background: var(--det-wash); }
+  .chip.llm { color: var(--llm); background: var(--llm-wash); }
+  .chip.flag { color: var(--flag); background: var(--flag-wash); }
+  .chip.mute { color: var(--ink-faint); background: transparent; }
+
+  /* ── 報告範例：等寬、可橫向捲動 ───────────────── */
+
+  .sample {
+    border: 1px solid var(--rule);
+    background: var(--card);
+    margin-bottom: 20px;
+  }
+
+  .sampleHead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+    padding: 10px 16px;
+    border-bottom: 1px solid var(--rule);
+    font-family: var(--mono);
+    font-size: 11px;
+    letter-spacing: 0.06em;
+    color: var(--ink-faint);
+  }
+
+  .sampleHead strong { color: var(--ink); font-size: 13px; letter-spacing: 0; }
+
+  .sample pre {
+    margin: 0;
+    padding: 16px;
+    overflow-x: auto;
+    font-family: var(--mono);
+    font-size: 12.5px;
+    line-height: 1.75;
+    white-space: pre;
+    tab-size: 2;
+  }
+
+  .sample .det { color: var(--det); }
+  .sample .llm { color: var(--llm); }
+  .sample .muted { color: var(--ink-faint); }
+
+  /* ── 模組全文 ─────────────────────────────────── */
+
+  .mod {
+    border: 1px solid var(--rule);
+    background: var(--card);
+    padding: 16px 20px 18px;
+    margin-bottom: 10px;
+  }
+
+  .modHead {
+    display: flex;
+    flex-wrap: wrap;
+    align-items: baseline;
+    gap: 10px;
+    margin-bottom: 6px;
+  }
+
+  .modHead strong { font-size: 16px; }
+  .modHead code { font-size: 11px; }
+
+  .modWhen {
+    font-family: var(--mono);
+    font-size: 11.5px;
+    color: var(--ink-faint);
+    margin: 0 0 12px;
+    max-width: none;
+  }
+
+  .modBody { font-size: 14.5px; margin: 0 0 10px; max-width: none; }
+  .modBody:last-child { margin-bottom: 0; }
+
+  .modUrgent {
+    font-size: 14px;
+    margin: 12px 0 0;
+    padding: 10px 14px;
+    background: var(--flag-wash);
+    color: var(--flag);
+    max-width: none;
+  }
+
+  .modUrgent strong { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.1em; }
+
+  /* ── 引言／重點框 ─────────────────────────────── */
+
+  .pull {
+    border-left: 3px solid var(--det);
+    background: var(--card);
+    padding: 16px 20px;
+    margin: 22px 0;
+  }
+
+  .pull.flagged { border-left-color: var(--flag); }
+  .pull p:last-child { margin-bottom: 0; }
+
+  .pull .pullLabel {
+    font-family: var(--mono);
+    font-size: 10.5px;
+    letter-spacing: 0.12em;
+    color: var(--ink-faint);
+    margin: 0 0 8px;
+  }
+
+  ul, ol { margin: 0 0 16px; padding-left: 22px; max-width: 66ch; }
+  li { margin-bottom: 7px; }
+
+  .plain { list-style: none; padding-left: 0; }
+  .plain li { padding-left: 18px; position: relative; }
+  .plain li::before {
+    content: "";
+    position: absolute;
+    left: 0;
+    top: 0.72em;
+    width: 7px;
+    height: 1px;
+    background: var(--ink-faint);
+  }
+
+  footer {
+    border-top: 1px solid var(--rule);
+    padding-top: 20px;
+    color: var(--ink-faint);
+    font-size: 13px;
+  }
+
+  @media (max-width: 620px) {
+    .step { grid-template-columns: 44px 1fr; }
+    .stepBody { padding: 16px 15px 18px; }
+    .fields { grid-template-columns: 1fr; gap: 2px 0; }
+    .fields dt { text-align: left; padding-top: 8px; }
+  }
+</style>
+
+<div class="wrap">
+
+  <header class="masthead">
+    <p class="kicker">內部簡介・邏輯逐步說明</p>
+    <h1>一份健保申報 JSON，<br />兩份可用的報告</h1>
+    <p class="standfirst">
+      這份文件把整條流程拆成十二步，每一步都寫清楚：吃什麼進去、做了什麼、吐什麼出來、
+      誰做的決定、以及這一步做不到的事。最後一節是還沒有答案的問題——那才是今天要討論的。
+    </p>
+
+    <dl class="meta">
+      <div><dt>指引門檻表</dt><dd>60 條・v0.7</dd></div>
+      <div><dt>衛教模組</dt><dd>14 個・draft-0.3</dd></div>
+      <div><dt>自我照護模組</dt><dd>8 個・draft-0.2</dd></div>
+      <div><dt>LLM 呼叫</dt><dd>每份報告 3 次</dd></div>
+      <div><dt>機械驗證</dt><dd>病人版 8／定義 11</dd></div>
+      <div><dt>核准狀態</dt><dd>全部 DRAFT</dd></div>
+    </dl>
+  </header>
+
+  <div class="legend">
+    <p>全篇用兩個顏色區分責任歸屬。這是整個系統唯一重要的設計主張：</p>
+    <span class="swatch det">程式判定・同樣輸入永遠同樣輸出</span>
+    <span class="swatch llm">LLM 生成・每次可能不同・需逐份審閱</span>
+    <span class="swatch flag">已知限制或待決定</span>
+  </div>
+
+  <section>
+    <h2>設計主張：LLM 只做程式做不到的三件事</h2>
+    <p class="sectionNote">
+      如果只記得一件事，記這個。併發症主題要不要納入、目標值是多少、追蹤多久一次——
+      這些全部由程式依規則表判定，換模型、換供應商、重跑一百次，結果都一樣。
+    </p>
+
+    <p>LLM 負責的只有三件：把原始檢驗紀錄讀成人看得懂的段落、找出程式規則沒涵蓋到的異常、以及指出資料本身的矛盾。它<strong>不能</strong>改變任何一項判定。病人版的後三段（併發症風險、預防叮嚀、就醫警訊）逐字來自固定模組，模型碰不到；<strong>但前三段（觀察摘要、短期建議、中期目標）是模型直接撰寫的</strong>，包含給病人的行動建議，目前仍需逐份審閱。</p>
+
+    <div class="pull">
+      <p class="pullLabel">為什麼這樣切</p>
+      <p>臨床內容要能送審。一段每次生成都不一樣的文字沒辦法審——審過的那一版明天就不見了。固定模組加確定性判定，讓「醫療團隊核准過的內容」這句話<strong>對後三段</strong>成立。</p>
+      <p>前三段付出的代價就是這個：它們每次都不一樣，所以「已核准」對它們不成立，只能靠程式的逐項數值核對與禁語掃描把明顯的錯擋下來，剩下的要人看。實跑就抓到模型自訂血糖監測頻率（「請於每日早餐前及三餐後量測」）——那是臨床決定，已補進禁語表。</p>
+    </div>
+  </section>
+
+
+  <section>
+    <h2>資料流</h2>
+    <p class="sectionNote">
+      這是線上工作台頁首那張圖，同一份原始碼渲染出來的——上面每個方框都對應一個函式或一次呼叫。
+      由上往下：來源與內容庫在最上，中間是程式判定與送出前的兩層整理，
+      三次 LLM 呼叫並排在同一列（它們是並行的，彼此不等待），最後組裝成兩份報告。
+    </p>
+
+    <p class="flowKey">
+      <span class="k-neutral">程式處理</span>
+      <span class="k-llm">LLM 呼叫</span>
+      <span class="k-content">固定內容（虛線＝要送審的東西）</span>
+      <span class="k-out">成品</span>
+    </p>
+
+    <div class="flowWrap">
+      <svg class="flowDiagram" viewBox="0 0 720 560" role="img" aria-label="資料流：程式判定為主，三次 LLM 呼叫只負責規則做不到的事"><defs><marker id="flowArrow" viewBox="0 0 10 10" refX="8" refY="5" markerWidth="6" markerHeight="6" orient="auto-start-reverse"><path d="M2 1L8 5L2 9" fill="none" stroke="currentColor" stroke-width="1.4" stroke-linecap="round"></path></marker></defs><g class="flowContent"><rect x="16" y="16" width="196" height="48" rx="6"></rect><text class="flowTitle" x="114" y="37" text-anchor="middle">指引門檻表</text><text class="flowSub" x="114" y="54" text-anchor="middle">60 條 · 附章表頁次</text></g><g class="flowNeutral"><rect x="262" y="16" width="196" height="48" rx="6"></rect><text class="flowTitle" x="360" y="37" text-anchor="middle">健保申報 JSON</text><text class="flowSub" x="360" y="54" text-anchor="middle">用藥 · 檢驗 · R/PR · DCSI</text></g><g class="flowNeutral"><rect x="16" y="112" width="196" height="48" rx="6"></rect><text class="flowTitle" x="114" y="133" text-anchor="middle">確定性事實與判定</text><text class="flowSub" x="114" y="150" text-anchor="middle">主題 · 目標 · 門檻（程式）</text></g><g class="flowNeutral"><rect x="508" y="112" width="196" height="48" rx="6"></rect><text class="flowTitle" x="606" y="133" text-anchor="middle">整理版（完整）</text><text class="flowSub" x="606" y="150" text-anchor="middle">逐欄照抄 · 不送出</text></g><g class="flowNeutral"><rect x="508" y="208" width="196" height="48" rx="6"></rect><text class="flowTitle" x="606" y="229" text-anchor="middle">送出版</text><text class="flowSub" x="606" y="246" text-anchor="middle">去識別 · 濾掉無關檢驗</text></g><g class="flowLlm"><rect x="16" y="304" width="196" height="48" rx="6"></rect><text class="flowTitle" x="114" y="325" text-anchor="middle">① 資料稽核</text><text class="flowSub" x="114" y="342" text-anchor="middle">找矛盾 · 進醫師版</text></g><g class="flowLlm"><rect x="262" y="304" width="196" height="48" rx="6"></rect><text class="flowTitle" x="360" y="325" text-anchor="middle">② 檢驗判讀</text><text class="flowSub" x="360" y="342" text-anchor="middle">讀原始紀錄</text></g><g class="flowLlm"><rect x="508" y="304" width="196" height="48" rx="6"></rect><text class="flowTitle" x="606" y="325" text-anchor="middle">③ 檢驗敘述</text><text class="flowSub" x="606" y="342" text-anchor="middle">寫成病人看的段落</text></g><g class="flowNeutral"><rect x="262" y="400" width="196" height="48" rx="6"></rect><text class="flowTitle" x="360" y="421" text-anchor="middle">驗證與組裝</text><text class="flowSub" x="360" y="438" text-anchor="middle">數值比對 · 禁止事項</text></g><g class="flowContent"><rect x="508" y="400" width="196" height="48" rx="6"></rect><text class="flowTitle" x="606" y="421" text-anchor="middle">固定衛教模組</text><text class="flowSub" x="606" y="438" text-anchor="middle">已審內容 · 模型不改寫</text></g><g class="flowOut"><rect x="140" y="496" width="196" height="48" rx="6"></rect><text class="flowTitle" x="238" y="517" text-anchor="middle">病人版衛教報告</text><text class="flowSub" x="238" y="534" text-anchor="middle">正文來自固定模組</text></g><g class="flowOut"><rect x="384" y="496" width="196" height="48" rx="6"></rect><text class="flowTitle" x="482" y="517" text-anchor="middle">醫師版報告</text><text class="flowSub" x="482" y="534" text-anchor="middle">附指引章表與頁次</text></g><g class="flowLine" marker-end="url(#flowArrow)"><path d="M58 64 L58 112"></path><path d="M360 64 L360 88 L170 88 L170 112"></path><path d="M360 64 L360 88 L606 88 L606 112"></path><path d="M606 160 L606 208"></path><path d="M114 160 L114 304"></path><path d="M170 160 L170 272 L654 272 L654 304"></path><path d="M558 256 L558 288 L360 288 L360 304"></path><path d="M606 256 L606 304"></path><path d="M114 352 L114 376 L360 376 L360 400"></path><path d="M360 352 L360 400"></path><path d="M606 352 L606 376 L360 376 L360 400"></path><path d="M508 424 L458 424"></path><path d="M360 448 L360 472 L238 472 L238 496"></path><path d="M360 448 L360 472 L482 472 L482 496"></path></g></svg>
+    </div>
+
+    <p>
+      三次呼叫拿到的東西不一樣，所以線分開畫：<strong>① 只拿確定性判定的結果</strong>（事實＋主題判定＋已解出的目標）、
+      <strong>② 只拿送出版的檢驗文字</strong>、<strong>③ 兩者都拿</strong>——文字給數值，判定給中期目標的目標值。
+      這三條線與程式碼核對過，不是示意。
+    </p>
+
+    <div class="pull">
+      <p class="pullLabel">這張圖不含的東西</p>
+      <p>它畫的是<strong>一位病人跑一次</strong>的資料流。批次跑完之後的「需人工檢查」清單（第十二步）發生在這張圖之後，沒有畫在上面。</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>十二個步驟</h2>
+    <p class="sectionNote">
+      左側編號是真的執行順序。第一到六步不需要金鑰、不連網，離線就能跑完；
+      第七到九步是三次 LLM 呼叫，任何一次失敗只會少掉對應的段落，不影響前面已經定案的內容；
+      第十到十二步回到程式：組裝、驗證，以及批次跑完之後挑出需要人看的那幾份。
+    </p>
+
+    <div class="steps">
+
+      <article class="step">
+        <div class="stepNum det"><span class="dot"></span>01<span class="spine"></span></div>
+        <div class="stepBody">
+          <p class="stepTitle">讀入與擋檔</p>
+          <p class="stepWho det">程式判定</p>
+          <dl class="fields">
+            <dt>輸入</dt><dd>使用者上傳或貼上的健保申報 JSON。</dd>
+            <dt>做什麼</dt><dd>解析 JSON，數出三種臨床訊號：糖尿病與腎病變診斷碼、有值的 R／PR 欄位、檢驗紀錄筆數。</dd>
+            <dt>輸出</dt><dd>可以往下跑，或一份寫清楚「為什麼不能跑、怎麼解決」的阻擋清單。</dd>
+            <dt>限制</dt><dd class="limit">三種訊號全空才擋。門檻刻意不設在「一定要有診斷碼」——真實匯出可能缺 ICD 卻有檢驗值，擋掉那種病人比放行空檔更糟。缺診斷碼會提醒，但不擋。</dd>
+          </dl>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="stepNum det"><span class="dot"></span>02<span class="spine"></span></div>
+        <div class="stepBody">
+          <p class="stepTitle">整理成 LLM 好讀文字</p>
+          <p class="stepWho det">程式判定</p>
+          <dl class="fields">
+            <dt>輸入</dt><dd>原始 JSON。</dd>
+            <dt>做什麼</dt><dd>把巢狀欄位攤平成分段的純文字。數值一律照抄，不做單位換算、不補值、不重新解釋分數。同時去識別：<code>userId</code> 整個移除，生日換算成年齡。</dd>
+            <dt>輸出</dt><dd>一份人和模型都讀得懂的文字，這是唯一會送出去的東西。頁面上同時保留一份「逐欄照抄、什麼都沒動」的完整版供對照——只給送出版的話，沒有人能確認被拿掉的到底是什麼。完整版含 userId 與生日，只在瀏覽器內顯示。</dd>
+            <dt>限制</dt><dd class="limit">性別保留，因為 HDL 目標分男女、檢驗參考值也常分性別年齡（<code>[≧18y] M 13.2-17.2 F 10.8-14.9</code>）。</dd>
+          </dl>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="stepNum det"><span class="dot"></span>03<span class="spine"></span></div>
+        <div class="stepBody">
+          <p class="stepTitle">濾掉與糖尿病無關的檢驗</p>
+          <p class="stepWho det">程式判定</p>
+          <dl class="fields">
+            <dt>輸入</dt><dd>步驟 02 的全部紀錄。</dd>
+            <dt>做什麼</dt><dd>移除微生物培養、血液氣體分析、白血球分類、發炎與凝血指標等與糖尿病照護判定無關的類別。</dd>
+            <dt>輸出</dt><dd>送進第八步的精簡版。2026-08-06 實測五份各少 3–42% 的篇幅（只少 3% 的那位量體是 87 筆血糖點測，那是核心指標，本來就該留）。</dd>
+            <dt>限制</dt><dd class="limit"><strong>樣式要照實際資料的寫法，不是照全名。</strong>原本寫 <code>lymphocyte</code>、<code>neutrophil</code>，而申報資料用 <code>Lym.</code>、<code>Seg</code>——29 種項目因此該濾卻送了出去。反方向同樣危險：<code>SGPT</code>／<code>ALT</code> 是肝酵素（<code>PT</code> 結尾）、<code>PTH</code> 副甲狀腺是 CKD 追蹤要用的。29 種必濾與 25 種必留都有測試釘住，濾前濾後在頁面上可逐項對照。</dd>
+          </dl>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="stepNum det"><span class="dot"></span>04<span class="spine"></span></div>
+        <div class="stepBody">
+          <p class="stepTitle">抽出確定性事實</p>
+          <p class="stepWho det">程式判定</p>
+          <dl class="fields">
+            <dt>輸入</dt><dd>原始 JSON。</dd>
+            <dt>做什麼</dt><dd>抽出 DCSI 總分、R1–R7 現況、PR1–PR6 風險預測、CKD 註記、診斷碼、用藥成分與分類、檢驗項目與數值範圍、資料截止日。同時判定糖尿病型別（E10 為第 1 型、E11 為第 2 型）。兩型的碼同時出現時改看用藥型態：只有胰島素、沒有任何非胰島素的降血糖藥才往第 1 型判。</dd>
+            <dt>輸出</dt><dd>一個結構化的事實物件，後面每一步都從它出發。</dd>
+            <dt>限制</dt><dd class="limit">檢驗紀錄只有費用年月、<strong>沒有採檢日期</strong>。因此無法判定任何一筆是不是「最近一次」，也建立不了趨勢。設計上禁止任何無日期依據的時序敘述，但<strong>禁語偵測不是完備的</strong>——2026-08-06 的實跑仍漏出「血糖波動較大」「控制相對穩定」這類寫法，已補上偵測，仍需人工確認。用藥型態的判別軸線刻意是「非胰島素」而不是「口服」——GLP-1 RA 是針劑但屬第 2 型用藥，寫成口服會把打 GLP-1 的第 2 型病人判成第 1 型。</dd>
+          </dl>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="stepNum det"><span class="dot"></span>05<span class="spine"></span></div>
+        <div class="stepBody">
+          <p class="stepTitle">判定要納入哪些併發症主題</p>
+          <p class="stepWho det">程式判定</p>
+          <dl class="fields">
+            <dt>輸入</dt><dd>R／PR 值、CKD 註記、診斷碼、檢驗數值。</dd>
+            <dt>做什麼</dt><dd>同一個主題，來源只會給 R 或 PR 其中一個。R ≥ 1 代表已發生，帶完整模組；PR 為 1 或 2 代表尚未發生，帶預防內容；PR 為 0 不納入。</dd>
+            <dt>輸出</dt><dd>每個主題的納入方式與判定理由，逐條可讀。</dd>
+            <dt>限制</dt><dd class="limit">腎臟另有三條覆寫來源，因為它們可能同時漏掉同一位病人：CKD 欄位、申報診斷碼、檢驗證據。實測有病人 eGFR 最低 22.8 卻三項前提全缺。<strong>只由檢驗值救回的標成「需確認」不是「已發生」</strong>——KDIGO 要求異常持續三個月以上，而沒有採檢日期就證明不了持續性。</dd>
+          </dl>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="stepNum det"><span class="dot"></span>06<span class="spine"></span></div>
+        <div class="stepBody">
+          <p class="stepTitle">解出目標值、門檻與追蹤間隔</p>
+          <p class="stepWho det">程式判定</p>
+          <dl class="fields">
+            <dt>輸入</dt><dd>事實物件、納入的主題、糖尿病型別。</dd>
+            <dt>做什麼</dt><dd>從門檻表推出這位病人的目標值（糖化血色素、空腹與餐後血糖、血壓、血脂）、實際數值有沒有超標、以及各項追蹤間隔。每一條都附可回查的章表與頁次。</dd>
+            <dt>輸出</dt><dd>目標清單、門檻命中清單、追蹤時程，全部帶出處。</dd>
+            <dt>限制</dt><dd class="limit">高齡的放寬需要「健康狀態」分級（共病、認知、身體機能、預期餘命），申報資料判定不了。這種情況只列出候選並標記需醫療團隊定案，<strong>不自行分級</strong>。反過來，資料判得出來的地方就分段給：腎功能追蹤依實際 eGFR 分成每 6 個月與每 3 個月，足部檢查依神經病變與周邊血管疾病的有無分成每年、每 6–12 個月、每 3–6 個月。</dd>
+          </dl>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="stepNum llm"><span class="dot"></span>07<span class="spine"></span></div>
+        <div class="stepBody">
+          <p class="stepTitle">① 資料稽核</p>
+          <p class="stepWho llm">LLM 生成・只進醫師版</p>
+          <dl class="fields">
+            <dt>輸入</dt><dd>確定性事實摘要，加上程式已經做完的主題判定。</dd>
+            <dt>做什麼</dt><dd>找資料本身的矛盾與需要人工確認的地方——例如診斷碼寫了腎病變但 R3 是空的、或用藥與診斷對不起來。</dd>
+            <dt>輸出</dt><dd>醫師版最後的「資料稽核」一節。</dd>
+            <dt>限制</dt><dd class="limit">這次呼叫<strong>改不了上面任何一項判定</strong>。它原本叫「模組挑選」，實測證明它挑的結果與程式完全一致（報告逐位元組相同），所以改成只做它真正有價值的事。</dd>
+          </dl>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="stepNum llm"><span class="dot"></span>08<span class="spine"></span></div>
+        <div class="stepBody">
+          <p class="stepTitle">② 檢驗判讀</p>
+          <p class="stepWho llm">LLM 生成・只進醫師版</p>
+          <dl class="fields">
+            <dt>輸入</dt><dd>濾過的檢驗紀錄，含各筆的參考值字串。</dd>
+            <dt>做什麼</dt><dd>讀原始紀錄，找出第六步的門檻判定沒有涵蓋到的異常。</dd>
+            <dt>輸出</dt><dd>醫師版的「需核實的檢驗結果」，依嚴重度排序。</dd>
+            <dt>限制</dt><dd class="limit">每一個引用的數值都要求<strong>該項目自己的來源值</strong>裡有這個數字，不是「這個數字有出現在資料裡某處」。曾經模型把飯前血糖的 315 掛到糖化血色素上寫成「315 %」，舊版整份放行。</dd>
+          </dl>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="stepNum llm"><span class="dot"></span>09<span class="spine"></span></div>
+        <div class="stepBody">
+          <p class="stepTitle">③ 檢驗敘述、短期建議、中期目標</p>
+          <p class="stepWho llm">LLM 生成・進病人版</p>
+          <dl class="fields">
+            <dt>輸入</dt><dd>檢驗紀錄，加上第六步已經解出的目標值。</dd>
+            <dt>做什麼</dt><dd>一次生成三段：觀察摘要、短期建議、中期目標。</dd>
+            <dt>輸出</dt><dd>病人版最前面的三段——整份報告唯一由模型寫的文字。</dd>
+            <dt>限制</dt><dd class="limit">這是唯一沒有程式版替代文字的段落。這次呼叫失敗，「短期建議」整段會消失，而驗證的必要段落檢查會因此失敗——那是刻意的，不能一邊少一段一邊宣稱六段齊全。</dd>
+          </dl>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="stepNum det"><span class="dot"></span>10<span class="spine"></span></div>
+        <div class="stepBody">
+          <p class="stepTitle">組裝兩份報告</p>
+          <p class="stepWho det">程式判定</p>
+          <dl class="fields">
+            <dt>輸入</dt><dd>判定結果、目標與門檻、三次呼叫的產出（有幾次算幾次）。</dd>
+            <dt>做什麼</dt><dd>依固定順序組裝六段：觀察摘要、短期建議、中期目標、併發症風險、預防叮嚀、什麼情況要立刻就醫。後三段逐字來自固定模組，模型不改寫。醫師版另外附 DCSI 分項、指引出處與資料稽核。</dd>
+            <dt>輸出</dt><dd>病人版與醫師版，抬頭都印上輸入指紋。</dd>
+            <dt>限制</dt><dd class="limit">模型生成的三段排最前面，因為後面幾段是網路上就找得到的通用衛教。</dd>
+          </dl>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="stepNum det"><span class="dot"></span>11</div>
+        <div class="stepBody">
+          <p class="stepTitle">機械驗證</p>
+          <p class="stepWho det">程式判定</p>
+          <dl class="fields">
+            <dt>輸入</dt><dd>組好的病人版報告，以及送進去的病人資料文字。</dd>
+            <dt>做什麼</dt><dd>跑 11 項不需要人判斷的檢查（下一節列出）。</dd>
+            <dt>輸出</dt><dd>逐項通過或未通過，顯示在畫面上。</dd>
+            <dt>限制</dt><dd class="limit">依決定，驗證未通過<strong>不會擋下下載</strong>——它只呈現結果，由人決定要不要用。</dd>
+          </dl>
+        </div>
+      </article>
+
+      <article class="step">
+        <div class="stepNum det"><span class="dot"></span>12</div>
+        <div class="stepBody">
+          <p class="stepTitle">批次跑完，挑出需要人看的那幾份</p>
+          <p class="stepWho det">程式判定</p>
+          <dl class="fields">
+            <dt>輸入</dt><dd>每一份的判定、驗證結果與三次呼叫的產出。</dd>
+            <dt>做什麼</dt><dd>把例外訊號收成一則紀錄，跑完彙總成一份清單。判定完全由程式做，不呼叫模型——用模型判斷「這份要不要人看」等於再引入一個要驗證的東西。</dd>
+            <dt>輸出</dt><dd><code>需人工檢查.txt</code>：哪幾份不可直接使用、哪幾份要有人看過，每一則都附「接下來要做什麼」。</dd>
+            <dt>限制</dt><dd class="limit">只列需要行動的案件。三千份裡有兩千九百份沒事，把它們也印出來會讓真正該看的那幾份被埋掉。</dd>
+          </dl>
+        </div>
+      </article>
+
+    </div>
+  </section>
+
+
+  <section>
+    <h2>兩份報告長什麼樣</h2>
+    <p class="sectionNote">
+      以下用合成資料實際跑出來，不是示意圖也不是真實病人——一位第 2 型、DCSI 4、
+      已有視網膜與腎臟病變、eGFR 38、UACR 420、HbA1c 8.6% 的虛構個案。
+      綠色是程式組的，紫色是模型寫的。
+    </p>
+
+    <h3>病人版：六段固定順序</h3>
+    <div class="sample">
+      <div class="sampleHead"><strong>病人版衛教報告</strong><span>合成個案・3,254 個中文字</span></div>
+<pre><span class="muted">※ DRAFT｜衛教模組 draft-0.3／自我照護模組 draft-0.2／指引門檻表 2022-guideline-extract-0.7
+   均尚未經醫療團隊核准，僅供流程比較，不得提供給病人。
+※ 本報告的「觀察摘要」「短期建議」「中期目標」三段由模型直接撰寫，未經醫療團隊逐句
+   核准；數值已由程式逐一比對來源，目標值取自指引門檻表。
+
+糖尿病衛教報告
+報告產生日期：2026-08-06
+資料截至日期：2026-07-31
+輸入指紋 4680c6f8692b</span>
+
+<span class="llm">【觀察摘要：您的檢驗數值】        ← 模型撰寫，每個數值逐項核對來源
+【短期建議：這一兩週可以開始做的事】  ← 模型撰寫
+【中期目標：下一階段要達到的數字】    ← 模型撰寫，目標數字由程式給</span>
+<span class="det">【併發症風險：與您有關的健康重點】    ← 固定模組逐字，模型不改寫
+【預防叮嚀：日常照護】                ← 固定模組逐字
+【什麼情況要立刻就醫】                ← 固定模組逐字</span></pre>
+    </div>
+
+    <p>
+      模型寫的三段排最前面，因為後面三段是網路上就找得到的通用衛教。這個順序對應
+      主管機關規格的五大面向，加上就醫警訊。
+    </p>
+
+    <h3>字數怎麼算</h3>
+    <p>
+      規格寫「2,000 至 3,000 中英文字」。這裡一律用<strong>中文字元數</strong>（不含標點、數字、英文與空白），
+      並且<strong>包含</strong>抬頭的 DRAFT 警語與各段的引用句——那些也會印在交給病人的紙上。
+      2026-08-06 用五份真實資料實跑的結果：
+    </p>
+    <div class="tableWrap">
+      <table>
+        <thead><tr><th></th><th>中文字</th><th>全部字元</th><th>對規格</th></tr></thead>
+        <tbody>
+          <tr><td>病人版</td><td class="num">3,621 – 4,195</td><td class="num">4,923 – 5,769</td><td><span class="chip flag">超出 2,000–3,000</span></td></tr>
+          <tr><td>醫師版</td><td class="num">1,490 – 1,889</td><td class="num">3,218 – 4,332</td><td><span class="chip mute">規格未規範</span></td></tr>
+        </tbody>
+      </table>
+    </div>
+    <p>
+      下面那份合成範例（3,254 個中文字）比實跑的五份短，因為它的檢驗項目少。
+      真實個案的檢驗紀錄越多，觀察摘要就越長。
+    </p>
+
+    <h3>醫師版：五節，前三節每一行都附出處</h3>
+    <div class="sample">
+      <div class="sampleHead"><strong>醫師版報告</strong><span>合成個案・1,653 個中文字</span><span>前三節出自規則表・後兩節由模型撰寫</span></div>
+<pre>一、併發症現況與風險預測
+DCSI 總分：4
+  視網膜病變　  已發生（嚴重度 1）
+  腦血管疾病　  來源未提供現況與風險預測
+  腎臟病變　　  已發生（嚴重度 1）
+  神經病變　　  來源未提供現況與風險預測
+  心血管疾病　  未發生｜風險預測：積極照護
+  周邊血管疾病  來源未提供現況與風險預測
+  代謝性急症　  來源未提供現況與風險預測
+  （來源對每一項只輸出其一：已發生者給嚴重度分數，未發生者給風險預測。）
+
+二、依指引推導的個別化目標
+  HbA1c：低於 7.0%，並需個別化考量。      〔表六 非懷孕成年人糖尿病的治療目標，p.12〕
+  Glucose AC：80–130 mg/dL。               〔第九章 第 2 型糖尿病的血糖治療目標，p.71〕
+  Glucose PC：80–160 mg/dL。               〔第九章 第 2 型糖尿病的血糖治療目標，p.71〕
+  BP：低於 130/80 mmHg（需同時注意降壓帶來的併發風險）。
+                                           〔第十四章 心血管併發症與其危險因子的處理，p.146〕
+  LDL-C：低於 100 mg/dL。                  〔表一 血脂的目標建議，p.153〕
+
+三、依指引的追蹤間隔
+  糖化血色素與血糖建議每 3 個月監測一次。   〔表九 臨床監測項目與建議頻率，p.18〕
+  每 3 個月測一次 eGFR，並每 3–6 個月測定電解質、碳酸氫鹽、鈣、磷⋯⋯
+                                           〔表二 CKD 糖尿病人之處置，p.199〕
+  眼底沒有變化或僅輕微變化時每年一次⋯⋯     〔表九 註 4，p.18〕
+  足部脈搏與踝臂動脈收縮壓比值建議每年檢查一次。〔表九 臨床監測項目與建議頻率，p.18〕
+
+<span class="llm">四、需核實的檢驗結果        ← ② 檢驗判讀的產出，依嚴重度排序
+五、資料稽核                ← ① 的產出，含它對程式判定提出的異議</span></pre>
+    </div>
+
+    <div class="pull">
+      <p class="pullLabel">這份範例可以指出來的三件事</p>
+      <p><strong>血壓目標是 130/80 不是 140/90</strong>，因為這位有蛋白尿——指引表六寫「高心血管疾病風險及蛋白尿患者」，而程式原本只看已發生的心血管疾病。</p>
+      <p><strong>腎功能追蹤是每 3 個月不是每年</strong>，因為 eGFR 38 落在表二的 30–44 分段。同一位病人如果 eGFR 是 55，這一行會變成每 6 個月。</p>
+      <p><strong>「來源未提供現況與風險預測」不會被寫成 0。</strong>四個主題留空就是留空，不補值也不當成沒問題。</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>批次跑三千份時，例外怎麼被看見</h2>
+    <p class="sectionNote">
+      這是單份跑與批次跑最大的差別。單份跑，醫師會看到醫師版；批次跑，沒有人會逐份打開。
+      嚴重度只有三級，而且定義是「人要做什麼」，不是「問題有多大」。
+    </p>
+
+    <div class="tableWrap">
+      <table>
+        <thead>
+          <tr><th>等級</th><th>意思</th><th>觸發條件</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td><span class="chip flag">不可直接使用</span></td>
+            <td>這份報告不能發出去</td>
+            <td>機械驗證未通過、病人版出現核不到來源的數值或禁止事項、③ 呼叫失敗、判讀器回抄的年齡與 DCSI 對不上輸入</td>
+          </tr>
+          <tr>
+            <td><span class="chip llm">需人看過</span></td>
+            <td>可以用，但要有人看過再出</td>
+            <td>資料稽核提出異議、糖尿病型別判不出來、編碼為第 2 型卻只用胰島素、腎臟主題只由檢驗值救回、程式規則漏抓、未列進引用清單的數字、①② 呼叫失敗、一個主題都沒納入、完全沒有檢驗紀錄</td>
+          </tr>
+          <tr>
+            <td><span class="chip mute">紀錄</span></td>
+            <td>不需要行動</td>
+            <td>資料不足而未判定的項目（幾乎每份都有，不進清單）</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pull">
+      <p class="pullLabel">兩個容易做錯的地方</p>
+      <p>沒跑 LLM 的批次不把「短期建議缺席」算成例外——它只由 ③ 產生、必然缺席，不排除的話三千份會三千份全標紅，清單就等於沒有清單。但有跑 LLM 卻缺段就是真的出事，那時候會留著。</p>
+      <p>判讀器會把輸入的年齡與 DCSI 抄回來，對不上就標成不可使用。中介檔刻意不寫識別碼，所以放錯資料夾不會有任何症狀——實測發生過一次兩位病人的輸出對調，是靠肉眼讀出病程對不上才發現的。</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>不需要人判斷的機械檢查</h2>
+    <p class="sectionNote">
+      這些檢查的共同點是答案唯一：要嘛有、要嘛沒有，不需要臨床判斷。
+      它們攔不住「內容錯但格式對」的報告，那要靠醫療團隊審閱模組本身。
+      <br /><br />
+      驗證器共定義 <strong>11 項</strong>，但一份報告只會跑到適用的那些——病人版目前是
+      <strong>8 項</strong>（實跑顯示的 <code>8/8</code> 就是這個分母）。另外 3 項只在其他情境適用：
+      分隔標記與完整引用兩份來源是舊版輸出格式才有的欄位，
+      「已發生的併發症不出現在未來風險清單」則要有實際的 R／PR 值才判得動。
+      批次跑另有一層例外清單，不算在這 11 項裡（見下一節）。
+    </p>
+
+    <div class="tableWrap">
+      <table>
+        <thead>
+          <tr><th>檢查</th><th>擋的是什麼</th><th>病人版</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>報告數字都能溯源</td><td>模型自己編出來的數值，或引用到別的項目上的數值</td><td class="mono">適用</td></tr>
+          <tr><td>六個段落逐字完整且順序正確</td><td>某次呼叫失敗導致整段消失，卻沒有人發現</td><td class="mono">適用</td></tr>
+          <tr><td>沒有建議自行停藥改藥</td><td>模型跨線給處置建議</td><td class="mono">適用</td></tr>
+          <tr><td>病人可見內容沒有 R／PR／DCSI 代碼</td><td>內部欄位代碼漏進病人讀的文字</td><td class="mono">適用</td></tr>
+          <tr><td>沒有把高／中／低風險當成分級標籤</td><td>把風險預測講成確定的分級，病人會讀成診斷</td><td class="mono">適用</td></tr>
+          <tr><td>已發生的併發症不出現在未來風險清單</td><td>同一個主題同時說「已經有」和「未來可能有」</td><td class="mono"><span class="chip mute">需 R／PR</span></td></tr>
+          <tr><td>完整引用兩份來源與免責聲明</td><td>報告出去了卻沒說依據哪一版指引</td><td class="mono"><span class="chip mute">舊格式</span></td></tr>
+          <tr><td>報告日期使用 YYYY-MM-DD</td><td>日期格式歧義</td><td class="mono">適用</td></tr>
+          <tr><td>分隔標記恰好出現一次</td><td>下游系統切錯段</td><td class="mono"><span class="chip mute">舊格式</span></td></tr>
+          <tr><td>沒有 Markdown 粗體、標題或表格符號</td><td>純文字輸出混進標記語法</td><td class="mono">適用</td></tr>
+          <tr><td>沒有任何一行以符號項目符號開頭</td><td>同上</td><td class="mono">適用</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>另外三道在流程中間就攔下的檢查</h3>
+    <ul class="plain">
+      <li><strong>逐項數值配對</strong>——模型引用的每個數字，要求該項目自己的來源值裡有這個數字。</li>
+      <li><strong>未引用數字掃描</strong>——文中出現但沒列進引用清單的數字會被標出來。</li>
+      <li><strong>程式漏抓偵測</strong>——模型找到而程式規則沒抓到的異常會被記錄，用來反過來修規則。</li>
+    </ul>
+
+    <h3>禁語掃描是舉例式的，不是窮舉的</h3>
+    <p>
+      模型寫的三段會掃四類禁止事項：推測診斷、處置建議、聲稱時序、自訂血糖監測頻率。
+      但每一類都是<strong>從實跑的錯誤反推出來的樣式</strong>，沒辦法保證涵蓋所有寫法——
+      這是這份文件裡最需要記住的一個限制。
+    </p>
+    <div class="pull flagged">
+      <p class="pullLabel">已知的兩次補漏（2026-08-06）</p>
+      <p><strong>以變化描述數值。</strong>原本只擋明說時間點的寫法（「最近一次」「已改善」），實跑五份全部出現「血糖波動較大」「控制相對穩定」——這些字同樣在講值隨時間怎麼變，而同一個範圍可能是同一天測三次，也可能橫跨兩年。可以說「紀錄中的飯前血糖介於 65 至 500」，不能說「波動大」。</p>
+      <p><strong>自訂血糖監測頻率。</strong>模型寫出「請於每日早餐前及三餐後固定時間量測血糖」——每天量幾次是臨床決定。「請與醫療團隊確認監測頻率」不算違規。</p>
+      <p>兩類樣式都要求指向數據才算：「吃得穩定」講的是行為，擋下來會讓標記變成雜訊——它的用途是告訴人「這幾句不可信」，誤報多了就沒人看。</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>指引來源與版本</h2>
+    <p class="sectionNote">
+      門檻表記錄的是<strong>事實</strong>（門檻數值、追蹤間隔、轉診急迫度），以自己的文字陳述並附可回查的出處，不重製指引原文。
+      指引全文不進版本控制，只由使用者在頁面上臨時載入。
+      <br /><br />
+      共 <strong>60 條</strong>。一份報告不會用到全部——規則依糖尿病型別分流，
+      第 2 型病人適用其中 44 條、第 1 型 51 條；另有 8 條標記為不對病人顯示（例如藥物禁忌與轉診急迫度），
+      只出現在醫師版。實際列出幾條還要看這位病人有哪些主題與檢驗數值。
+    </p>
+
+    <div class="tableWrap">
+      <table>
+        <thead>
+          <tr><th>來源</th><th class="num">條數</th><th>用在哪裡</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>2022 第 2 型糖尿病臨床照護指引</td>
+            <td class="num">42</td>
+            <td>第 2 型病人的全部目標與追蹤間隔</td>
+          </tr>
+          <tr>
+            <td>2022 第 1 型糖尿病臨床照護指引</td>
+            <td class="num">16</td>
+            <td>第 1 型病人的目標與篩檢起始時機</td>
+          </tr>
+          <tr>
+            <td>第十五章 4.糖尿病足（2024 年 6 月更新）</td>
+            <td class="num">2</td>
+            <td>依 IWGDF 風險分級決定足部檢查頻率</td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>兩型的數字是真的不一樣</h3>
+    <div class="tableWrap">
+      <table>
+        <thead>
+          <tr><th>項目</th><th>第 2 型</th><th>第 1 型</th></tr>
+        </thead>
+        <tbody>
+          <tr><td>餐後血糖</td><td class="mono">80–160 mg/dL</td><td class="mono">成人低於 180 mg/dL</td></tr>
+          <tr><td>糖化血色素監測</td><td>每 3 個月</td><td>一年至少 2 次；未達標 4 次</td></tr>
+          <tr><td>腎臟篩檢起始</td><td>每年，自診斷起</td><td>發病滿 5 年，且青春期或大於 10 歲</td></tr>
+          <tr><td>眼底首檢</td><td>每年</td><td>11 歲以上診斷後 2 年；9 歲診斷後 5 年</td></tr>
+          <tr><td>神經篩檢起始</td><td>每年</td><td>罹病後 2–5 年、青春期或大於 10 歲</td></tr>
+        </tbody>
+      </table>
+    </div>
+
+    <div class="pull flagged">
+      <p class="pullLabel">值得知道的一件事</p>
+      <p>2026 年 8 月 6 日拿兩份 PDF 逐頁核對過每一條規則。<strong>門檻數值全部正確，但有九組頁次是錯的</strong>——臨床監測項目表實際在第 18 頁不是 19、血脂目標表在 153 不是 154。偏移還不一致，只能逐條核。這類錯誤特別惡劣：報告上的引用看起來完全正常，醫師跳過去只會落在隔壁章，然後懷疑的是自己。頁次現在用快照測試釘住。</p>
+    </div>
+  </section>
+
+  <section>
+    <h2>資料本身的限制</h2>
+    <p class="sectionNote">
+      這些不是還沒做完的功能，是申報資料給不出來的東西。報告裡都有明說，不會假裝知道。
+    </p>
+
+    <ul class="plain">
+      <li><strong>檢驗紀錄沒有採檢日期</strong>，只有費用年月。所以判定不了「最近一次」，也建立不了趨勢——整份報告不會出現任何時序或進步退步的說法。</li>
+      <li><strong>用藥是歷史申報紀錄，不是目前正在吃的藥。</strong>兩年前開過的藥仍會出現在資料裡。</li>
+      <li><strong>高齡放寬需要健康狀態分級</strong>（共病、認知、身體機能、預期餘命），申報資料判定不了，因此只列候選並標記待醫療團隊定案。</li>
+      <li><strong>第 1 型的篩檢起始時機取決於發病年份</strong>，申報資料判不出來，會標示需醫療團隊確認。</li>
+      <li><strong>PR 欄位留空不代表 0</strong>，代表那個主題在 R 已經有值、不需要預測。R 與 PR 對同一主題互斥，六位病人的資料都驗證過。</li>
+    </ul>
+  </section>
+
+  <section>
+    <h2>還沒有答案的問題</h2>
+    <p class="sectionNote">
+      這一節是今天的主體。每一項都對照過 2026-08-06 的程式碼與實跑結果，不是猜測。
+      已經解決的移到下一小節，避免把待辦和成果混在一起讀。
+    </p>
+
+    <div class="tableWrap">
+      <table>
+        <thead>
+          <tr><th>問題</th><th>現在是怎樣</th><th>狀態</th></tr>
+        </thead>
+        <tbody>
+          <tr>
+            <td>模型寫的三段沒有人逐句核准</td>
+            <td>觀察摘要、短期建議、中期目標每次生成都不同，只有程式的數值核對與禁語掃描把關。實跑抓到自訂血糖監測頻率與「血糖波動較大」，兩者已補進禁語表，但這類問題是舉例式發現的，不是窮舉的</td>
+            <td><span class="chip flag">需決定審閱流程</span></td>
+          </tr>
+          <tr>
+            <td>三份固定內容都還沒有人簽</td>
+            <td>衛教模組、自我照護模組、指引門檻表的核准旗標都是 false，報告抬頭會印 DRAFT 警語</td>
+            <td><span class="chip flag">等版本穩定後找人審</span></td>
+          </tr>
+          <tr>
+            <td>型別兩者都判不出來時仍套第 2 型</td>
+            <td>兩型碼並存時已改用用藥型態解；但診斷碼完全缺席時仍套第 2 型的數字，並寫進「資料不足、未判定」與批次清單</td>
+            <td><span class="chip flag">預設值待確認</span></td>
+          </tr>
+          <tr>
+            <td>衛教模組正文不分 CKD 分期</td>
+            <td>追蹤頻率已依 eGFR 分段（每 6 個月／每 3 個月），但腎臟衛教的<strong>正文</strong>仍是同一份給所有腎病變病人</td>
+            <td><span class="chip flag">待做</span></td>
+          </tr>
+          <tr>
+            <td>字數超出規格</td>
+            <td>規格要 2,000–3,000 字。2026-08-06 實跑病人版 3,621–4,195 個中文字（含標點與英文共 4,923–5,769 字元）</td>
+            <td><span class="chip flag">待調</span></td>
+          </tr>
+          <tr>
+            <td>供應商條款</td>
+            <td>Gemini 的附加條款不允許臨床用途。已移除 userId、生日換算成年齡，但條款本身仍需釐清</td>
+            <td><span class="chip flag">需法務或政策決定</span></td>
+          </tr>
+        </tbody>
+      </table>
+    </div>
+
+    <h3>已經處理掉的（供對照）</h3>
+    <ul class="plain">
+      <li>逐項數值配對，取代原本的整份比對</li>
+      <li>UACR 限定 mg/g，濃度 mg/L 不再誤判為比值</li>
+      <li>metformin 提示改看實際成分，不看藥理分類</li>
+      <li>醫師版腎臟主題三條覆寫來源各自具名</li>
+      <li>只由檢驗值救回的腎臟主題標為「需確認」而非「已發生」</li>
+      <li>蛋白尿病人納入加嚴血壓目標</li>
+      <li>報告抬頭印輸入指紋，換病人沒重跑會跳警告</li>
+      <li>送出前移除 userId、生日換算成年齡，頁面保留完整版供對照</li>
+      <li>兩型診斷碼並存時改用用藥型態判定，編碼為第 2 型卻只用胰島素會被標記</li>
+      <li>批次跑完產出「需人工檢查」清單，例外不再只寫在沒人打開的檔案裡</li>
+      <li>眼底與足部改為所有糖尿病人都列（表九的通則）</li>
+      <li>腎功能追蹤依實際 eGFR 分成每 6 個月與每 3 個月</li>
+      <li>微量白蛋白尿 30–299 mg/g 納入判定，標為需確認</li>
+      <li>補上血脂次要目標（非 HDL-C、總膽固醇）</li>
+      <li>移除報告中的 KDIGO 引用，只引實際採用的兩份指引</li>
+      <li>批次跑完產出「需人工檢查」清單，三級嚴重度、每則附下一步</li>
+      <li>眼底與足部改為所有糖尿病人都列，不再只提醒已經出事的人</li>
+      <li>微量白蛋白尿 30–299 mg/g 納入判定，標為需確認</li>
+      <li>輸入指紋改純字母——十六進位的數字被驗證器當成報告數值，五份全部誤判</li>
+      <li>模型引用醫令名稱（醣化血紅素）不再被判成找不到來源</li>
+      <li>補上「以變化描述數值」與「自訂血糖監測頻率」兩類禁語</li>
+    </ul>
+  </section>
+
+
+  <section>
+    <h2>模組全文</h2>
+    <p class="sectionNote">
+      病人版的併發症風險、預防叮嚀與就醫警訊，每一句都逐字出自下面這些模組，
+      模型不改寫。這是要送醫療團隊核准的東西——下面就是全部，沒有省略。
+    </p>
+
+    <div class="pull flagged">
+      <p class="pullLabel">核准狀態</p>
+      <p>三份內容目前都標記為未核准，報告抬頭會印 DRAFT 警語。這一節的文字直接取自程式碼，與線上工作台的「報告會用到的固定內容」分頁完全一致。</p>
+    </div>
+
+    <h3>衛教模組　14 個　draft-0.3</h3>
+        <article class="mod">
+          <div class="modHead"><strong>關於這份報告</strong><code>BASE-01</code></div>
+          <p class="modWhen">納入條件：每份報告固定顯示，由程式自動加入。</p>
+          <p class="modBody">這份內容是依報告產生當時可取得的既往健康資料整理，不會隨您之後的檢查、症狀或用藥變化自動更新。請先查看上方的「資料截至日期」；如果您最近的健康狀況已有改變，請以最新檢查結果及醫療團隊的評估為準。</p>
+          <p class="modBody">本報告用來幫助您準備自我照護，不能取代診斷或處方。請勿只依本報告自行停藥、換藥、增減藥量或改變胰島素劑量。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>關於您的糖尿病類型</strong><code>TYPE-UNCLEAR</code></div>
+          <p class="modWhen">納入條件：診斷碼、用藥或病史指向不一致，或無法確認類型時由程式自動加入。</p>
+          <p class="modBody">目前資料無法一致確認您的糖尿病類型。第一型與第二型糖尿病在胰島素使用、低血糖與生病期間的照護方式可能不同，請在下次回診時向醫師確認診斷類型及適合您的自我照護方式。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>眼睛與視力</strong><code>EYE-CORE</code></div>
+          <p class="modWhen">納入條件：R1 大於 0，或 PR1 為 1（適度介入）或 2（積極照護）。</p>
+          <p class="modBody">糖尿病可能影響眼底的小血管。早期視網膜病變常沒有不舒服，視力正常也不代表眼底正常，所以定期眼底檢查很重要。</p>
+          <p class="modBody">1. 記下最近一次眼底或散瞳檢查的日期與結果。若只做過一般視力檢查，回診時確認是否也做了眼底檢查。
+2. 計畫懷孕、已懷孕，或近期血糖快速改變時，請告知眼科與糖尿病照護團隊。</p>
+          <p class="modUrgent"><strong>就醫警訊　</strong>突然看不見、視力快速下降，或突然出現明顯黑影、重影：當天儘速就醫。</p>
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>第一型糖尿病眼底檢查補充</strong><code>EYE-T1</code><span class="chip llm">第 1 型專用</span></div>
+          <p class="modWhen">納入條件：已選 EYE-CORE，且糖尿病類型已明確確認為第一型。</p>
+          <p class="modBody">第一型糖尿病在發病五年內，應完成第一次包含散瞳的完整眼科檢查。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>第二型糖尿病眼底檢查補充</strong><code>EYE-T2</code><span class="chip llm">第 2 型專用</span></div>
+          <p class="modWhen">納入條件：已選 EYE-CORE，且糖尿病類型已明確確認為第二型。</p>
+          <p class="modBody">第二型糖尿病在確診時可能已存在一段時間，因此診斷後應儘快完成第一次包含散瞳的完整眼科檢查。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>腦血管</strong><code>STROKE-CORE</code></div>
+          <p class="modWhen">納入條件：R2 大於 0，或 PR2 為 1（適度介入）或 2（積極照護）。</p>
+          <p class="modBody">血糖、血壓、血脂、吸菸與心律問題都可能影響腦血管。重點是持續管理可改善的因素，並讓自己和家人認得中風警訊。</p>
+          <p class="modBody">1. 曾有短暫單側無力、嘴歪、說話不清、突然視力異常或走路不穩，即使症狀已消失也要儘速告訴醫師。
+2. 若曾被告知有心房顫動或頸動脈問題，回診時確認是否需要進一步追蹤。</p>
+          <p class="modUrgent"><strong>就醫警訊　</strong>記住「微笑、舉手、說你好」：微笑時臉部不對稱、雙手舉起時一側無力下垂，或說話突然不清楚，只要出現其中一項，就記下發生時間並立即撥打 119。不要等症狀自行消失，也不要自行開車就醫。</p>
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>腎臟</strong><code>KIDNEY-CORE</code></div>
+          <p class="modWhen">納入條件：R3 大於 0、CKD 欄位為 1、申報診斷碼有慢性腎臟病、檢驗證據達門檻，或 PR3 為 1（適度介入）或 2（積極照護）。</p>
+          <p class="modBody">糖尿病腎臟病變早期通常沒有症狀，不能只靠水腫或不舒服來判斷；要看尿液白蛋白／肌酸酐比值（UACR）、血清肌酸酐與腎絲球過濾率（eGFR）。</p>
+          <p class="modBody">1. 看診、看牙或領藥時主動告知自己的腎功能狀況。
+2. 不長期自行服用非處方消炎止痛藥，也不用成分不明的中草藥、保健品或偏方。這不代表要停用醫師開立的藥；處方調整由醫師決定。
+3. 飲水量、鹽分、蛋白質與鉀的限制須依個人腎功能、心臟狀況與營養評估決定，不要自行套用網路上的腎臟飲食。</p>
+          <p class="modUrgent"><strong>就醫警訊　</strong>尿量突然明顯變少、腳或臉突然腫起、呼吸變喘、持續噁心嘔吐或意識變得不清楚：儘速就醫；若呼吸困難或意識改變明顯，立即撥打 119。</p>
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>第一型糖尿病腎臟檢查補充</strong><code>KIDNEY-T1</code><span class="chip llm">第 1 型專用</span></div>
+          <p class="modWhen">納入條件：已選 KIDNEY-CORE，且糖尿病類型已明確確認為第一型。</p>
+          <p class="modBody">第一型糖尿病通常從發病五年後開始定期接受 UACR、血清肌酸酐與 eGFR 檢查。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>第二型糖尿病腎臟檢查補充</strong><code>KIDNEY-T2</code><span class="chip llm">第 2 型專用</span></div>
+          <p class="modWhen">納入條件：已選 KIDNEY-CORE，且糖尿病類型已明確確認為第二型。</p>
+          <p class="modBody">第二型糖尿病在診斷時就應開始接受 UACR、血清肌酸酐與 eGFR 檢查。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>神經與感覺</strong><code>NERVE-CORE</code></div>
+          <p class="modWhen">納入條件：R4 大於 0，或 PR4 為 1（適度介入）或 2（積極照護）。</p>
+          <p class="modBody">糖尿病神經病變可能出現麻木、刺痛、灼熱、疼痛、感覺變鈍或平衡變差，早期也可能沒有症狀。感覺變差時小傷口不容易被發現，所以麻木不等於沒問題。類似症狀也可能來自其他疾病或營養問題，需由醫療人員評估。</p>
+          <p class="modBody">1. 不要因為腳不痛就忽略傷口，也不要用熱水、電毯或熱敷測試足部感覺。
+2. 若出現姿勢性頭暈、心跳異常、反覆噁心或腹瀉便祕、排尿困難、性功能改變，或低血糖越來越沒有警訊，請告訴醫療團隊——這些可能和自主神經有關。
+3. 不要自行長期服用止痛藥或神經痛藥物。</p>
+          <p class="modUrgent"><strong>就醫警訊　</strong>新出現明顯無力、走路突然不穩，或足部有傷口、紅腫、化膿、發燒、明顯變色：儘速就醫。</p>
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>第一型糖尿病神經檢查補充</strong><code>NERVE-T1</code><span class="chip llm">第 1 型專用</span></div>
+          <p class="modWhen">納入條件：已選 NERVE-CORE，且糖尿病類型已明確確認為第一型。</p>
+          <p class="modBody">第一型糖尿病在發病五年後開始每年評估；有症狀時不必等待滿五年，應提早提出。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>第二型糖尿病神經檢查補充</strong><code>NERVE-T2</code><span class="chip llm">第 2 型專用</span></div>
+          <p class="modWhen">納入條件：已選 NERVE-CORE，且糖尿病類型已明確確認為第二型。</p>
+          <p class="modBody">第二型糖尿病從診斷開始每年評估；若已有麻、痛、灼熱或感覺變差，請在回診時主動提出。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>心臟</strong><code>HEART-CORE</code></div>
+          <p class="modWhen">納入條件：R5 大於 0，或 PR5 為 1（適度介入）或 2（積極照護）。</p>
+          <p class="modBody">糖尿病常和高血壓、血脂異常、吸菸、腎功能問題與心血管疾病互相影響。保護心臟不是只看血糖。</p>
+          <p class="modBody">1. 留意是否比以前容易喘、平躺時喘、腳腫、心悸、容易疲倦，或短時間內體重快速增加，並告訴醫療團隊。
+2. 運動強度依體力、心臟狀況與醫療團隊建議逐步增加；活動時胸悶或喘就先停止並接受評估。</p>
+          <p class="modUrgent"><strong>就醫警訊　</strong>突然胸悶或胸痛、喘不過氣、冒冷汗、噁心、頭暈或昏厥，或不尋常的背部疼痛併隨不適：立即撥打 119。不要自行開車，也不要嘗試以大力咳嗽取代就醫。</p>
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>下肢循環</strong><code>LEG-CIRCULATION-CORE</code></div>
+          <p class="modWhen">納入條件：R6 大於 0，或 PR6 為 1（適度介入）或 2（積極照護）。</p>
+          <p class="modBody">周邊動脈疾病是腿部與足部的動脈循環變差。可能沒有症狀，也可能走一段路後小腿痠痛、休息後改善，或足部冰冷、顏色變淡、傷口不易癒合。這和神經麻木不同，但兩者可能同時存在。</p>
+          <p class="modBody">1. 留意走路時是否固定在相近距離出現小腿、臀部或大腿疼痛、休息後是否改善。把位置、距離與持續時間記下來，回診時提供。
+2. 已有足部傷口、休息時也疼痛、明顯變色或疑似嚴重缺血時，先接受醫療評估再決定運動方式。
+3. 不要自行購買抗血小板藥物。</p>
+          <p class="modUrgent"><strong>就醫警訊　</strong>一隻腳突然劇烈疼痛、變得明顯冰冷或蒼白、發紫、麻木或無力：立即就醫。若有傷口、紅腫、流膿、異味或發燒，也要儘快就醫。</p>
+        </article>
+        <h3>共同區塊　3 個（整份報告各出現一次）</h3>
+        <article class="mod">
+          <div class="modHead"><strong>血糖、血壓與血脂</strong><code>SHARED-TARGETS</code></div>
+          <p class="modWhen">納入條件：固定納入</p>
+          <p class="modBody">這三項會一起影響眼睛、腎臟、神經、心臟與腦部的血管，只顧血糖不夠。每個人的目標會依年齡、共病與用藥調整，依醫療團隊訂的目標控制即可，不必和別人比較數字。</p>
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>每天花一分鐘照顧雙腳</strong><code>SHARED-FOOT</code></div>
+          <p class="modWhen">納入條件：由主題觸發：foot</p>
+          <p class="modBody">1. 每天查看腳背、腳底、腳趾縫與腳跟，看不到腳底可用鏡子或請家人協助。留意水泡、破皮、裂傷、紅腫、變色、滲液、異味、厚繭或指甲周圍發炎。
+2. 每天以溫水清潔並擦乾，尤其腳趾縫。水溫先用手肘確認，不要用熱水袋、電毯或暖暖包熱敷足部。
+3. 不赤腳走路，也不要只穿襪子或薄底拖鞋。穿鞋前先摸鞋內是否有砂石、破損或凸起物。
+4. 不要自行剪除厚繭、雞眼，也不要在傷口上使用來路不明的藥膏或偏方。</p>
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>關於吸菸</strong><code>SHARED-SMOKING</code></div>
+          <p class="modWhen">納入條件：由主題觸發：smoking</p>
+          <p class="modBody">吸菸會同時傷害眼底、腎臟與全身大小血管，戒菸是對血管保護效益最大的一件事。可請醫療團隊轉介戒菸服務，或撥打戒菸專線。</p>
+        </article>
+        <h3>自我照護模組　8 個　draft-0.2</h3>
+        <article class="mod">
+          <div class="modHead"><strong>掌握自己的數字</strong><code>SC-MONITOR</code><span class="chip mute">固定納入</span></div>
+          <p class="modWhen">納入條件：每份報告固定納入。</p>
+          <p class="modBody">知道自己的數字，回診時才問得出重點。</p>
+          <p class="modBody">1. 記下最近一次的糖化血色素、血壓、血脂與腎功能結果和日期。
+2. 若醫療團隊建議在家測血糖，記錄時間點（空腹、飯後或睡前）與數值，回診時帶去。
+3. 量血壓前先坐著休息五分鐘，手臂與心臟同高，每天固定時間量。
+4. 不要只看單一次數字，一段時間的變化更能反映真實狀況。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>把藥用對、用得安全</strong><code>SC-MEDS</code><span class="chip mute">固定納入</span></div>
+          <p class="modWhen">納入條件：每份報告固定納入。</p>
+          <p class="modBody">規律用藥是控制糖尿病最直接的一環，任何調整都應由醫師決定。</p>
+          <p class="modBody">1. 依醫師指示的時間與劑量服藥。常忘記可用藥盒或手機提醒。
+2. 服藥後不舒服先聯絡醫療團隊或藥師，不要自行停藥、減藥或換藥。
+3. 看診、看牙、到藥局時出示目前所有藥品清單，包含中草藥、保健食品與他院的藥。
+4. 不要自行購買來路不明的藥品、偏方，或宣稱可取代處方的產品。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>吃得穩定，不必吃得痛苦</strong><code>SC-EAT</code><span class="chip mute">固定納入</span></div>
+          <p class="modWhen">納入條件：每份報告固定納入。</p>
+          <p class="modBody">糖尿病的飲食不是不能吃，而是讓份量與時間穩定下來。</p>
+          <p class="modBody">1. 三餐時間固定，不要為了控制血糖跳過正餐。
+2. 主食（飯、麵、麵包、根莖類、水果）最影響血糖，份量比種類重要，可請營養師協助換算。
+3. 每餐先吃蔬菜與蛋白質、再吃主食，血糖上升較慢。
+4. 含糖飲料最容易被忽略：手搖飲、罐裝飲料、運動飲料。改喝白開水或無糖茶最快見效。
+5. 若同時有腎臟或心臟問題，鹽分、蛋白質與水分的限制需要依個人狀況設計，不要自行套用網路上的飲食法。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>動起來，從做得到的強度開始</strong><code>SC-ACTIVE</code><span class="chip mute">固定納入</span></div>
+          <p class="modWhen">納入條件：每份報告固定納入。</p>
+          <p class="modBody">規律活動能同時改善血糖、血壓與血脂，重點是能持續。</p>
+          <p class="modBody">1. 從現在做得到的強度開始逐步增加，走路最容易持續。每坐約一小時起來動幾分鐘。
+2. 活動時若胸悶、胸痛、明顯喘不過氣、頭暈或冒冷汗，立即停止並儘速就醫。
+3. 已有足部傷口、視網膜病變、心臟疾病或平衡問題者，開始新運動前先與醫療團隊討論。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>疫苗與口腔</strong><code>SC-RISK-REDUCE</code><span class="chip mute">固定納入</span></div>
+          <p class="modWhen">納入條件：每份報告固定納入。</p>
+          <p class="modBody">1. 依醫療團隊建議接種疫苗。
+2. 維持口腔清潔並定期洗牙。牙周發炎與血糖控制會互相影響。</p>
+          
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>認識低血糖並知道怎麼處理</strong><code>SC-HYPO</code></div>
+          <p class="modWhen">納入條件：資料中有胰島素或促胰島素分泌劑（如 sulfonylurea、glinide）的申報紀錄時納入。</p>
+          <p class="modBody">某些糖尿病藥物可能造成低血糖，事先知道怎麼處理就不會慌張。</p>
+          <p class="modBody">1. 常見症狀：發抖、冒冷汗、心悸、飢餓感、頭暈、視線模糊、注意力不集中、突然情緒改變。
+2. 懷疑低血糖時先測血糖，無法測量就先當作低血糖處理。
+3. 立即補充約 15 公克醣類（半杯果汁、含糖飲料或方糖），15 分鐘後再測，仍偏低可再補充一次。症狀改善後若距下一餐還久，再吃一份含澱粉點心。
+4. 隨身攜帶糖果或含糖飲料，並讓家人、同事知道該怎麼幫您。</p>
+          <p class="modUrgent"><strong>就醫警訊　</strong>低血糖時出現意識不清、抽搐或無法自行吞嚥：旁人不可強行餵食，請立即撥打 119。</p>
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>生病或使用類固醇期間的照護</strong><code>SC-SICKDAY</code></div>
+          <p class="modWhen">納入條件：資料中有全身性類固醇的申報紀錄，或年齡 65 歲以上，或已發生併發症項目較多時納入。</p>
+          <p class="modBody">感染、發燒或使用類固醇期間，血糖可能明顯上升。</p>
+          <p class="modBody">1. 生病期間不要自行停用糖尿病藥物，除非醫師另有指示。
+2. 這段期間血糖可能比平常高，若醫療團隊有教您自我監測，建議增加測量頻率。
+3. 注意補充水分。發燒、腹瀉或嘔吐時特別容易脫水。
+4. 使用類固醇期間血糖上升是常見反應，停藥後可能回降。用藥前後請主動告知糖尿病照護團隊。</p>
+          <p class="modUrgent"><strong>就醫警訊　</strong>生病期間持續嘔吐無法進食、血糖持續偏高不下、呼吸變喘、意識改變或明顯脫水：儘速就醫。</p>
+        </article>
+        <article class="mod">
+          <div class="modHead"><strong>照顧情緒也是照顧糖尿病</strong><code>SC-COPING</code></div>
+          <p class="modWhen">納入條件：已發生併發症較多或整體疾病負擔較高時納入。</p>
+          <p class="modBody">長期管理慢性病本來就累，情緒低落或倦怠並不代表您做得不好。</p>
+          <p class="modBody">1. 覺得疲乏、沮喪或對自我照護失去動力，是常見且可以被協助的狀況，不是意志力的問題。
+2. 一次只調整一件事。設定小而具體的目標，比一次改變全部更容易持續。
+3. 讓家人或朋友知道您正在做的事，需要時請他們協助提醒或陪同回診。
+4. 若情緒低落持續超過兩週、影響睡眠或日常生活，請主動告訴醫療團隊，可安排進一步評估與轉介。</p>
+          <p class="modUrgent"><strong>就醫警訊　</strong>若出現傷害自己的念頭：請立即告訴身邊的人並尋求協助，或撥打 1925 安心專線。</p>
+        </article>
+  </section>
+
+  <section>
+    <h2>要當場示範的話</h2>
+    <p>
+      線上工作台：<a href="https://voho0000.github.io/dm-education-workbench/">voho0000.github.io/dm-education-workbench</a>
+    </p>
+    <p>建議照這個順序點：</p>
+    <ol>
+      <li>頁首的<strong>流程圖</strong>——上面十二步的實際資料流。</li>
+      <li><strong>載入合成示範資料</strong>，看程式抽出來的事實與判定路徑，每一條都有理由。</li>
+      <li><strong>工廠管線</strong>——每一站可以展開看真正在跑的原始碼，不是示意。</li>
+      <li><strong>報告會用到的固定內容</strong>——14 個衛教模組、8 個自我照護模組、60 條門檻表逐條攤開，這是要送審的東西。</li>
+      <li><strong>三層輸入對照</strong>——原始 JSON、逐欄照抄的完整整理版、實際送出的去識別濾過版。第三個分頁會顯示比第二個少了幾個字。</li>
+    </ol>
+    <p>示範資料是合成的，不是真實病人。</p>
+  </section>
+
+  <footer>
+    <p>整理於 2026 年 8 月 6 日，對照部署版本 build 20260806042332。上述每一項數字與行為都對照過當時的程式碼與部署版本。</p>
+  </footer>
+
+</div>
