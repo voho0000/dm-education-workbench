@@ -3658,3 +3658,44 @@ test("模型寫的清單符號會被去掉，因為病人版禁止符號項目�
   );
   assert.match(kept.narrative, /80-130/);
 });
+
+test("用「波動」「穩定」描述數值算違規，講行為不算", () => {
+  // 實測五份報告全部出現「血糖波動較大」「控制相對穩定」。這些字在講值隨
+  // 時間怎麼變，而申報資料沒有採檢日期——同一個範圍可能是同一天測三次，
+  // 也可能橫跨兩年。可以說範圍，不能說波動。
+  const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-06" }, rawSources: {} });
+  const banned = (text) =>
+    parseLabNarrative(JSON.stringify({ narrative: text, cited_values: [] }), facts).bannedPhrases;
+  const LABEL = "以變化或穩定度描述數值（資料沒有採檢日期，判定不了先後）";
+
+  for (const text of [
+    "日常飯前血糖數值波動較大",
+    "腎臟相關指標顯示指數有所波動",
+    "顯示整體血糖控制相對穩定",
+    "餐後與隨機血糖波動更為劇烈",
+  ]) {
+    assert.ok(banned(text).includes(LABEL), `應擋下：${text}`);
+  }
+
+  // 講行為或講範圍都不算——擋下這些會讓標記變成雜訊
+  for (const text of [
+    "紀錄中的飯前血糖範圍是 65 至 500 mg/dL",
+    "吃得穩定，不必吃得痛苦",
+    "糖尿病的飲食不是不能吃，而是讓份量與時間穩定下來",
+  ]) {
+    assert.deepEqual(banned(text), [], `不該擋：${text}`);
+  }
+});
+
+test("模型不得自訂血糖監測頻率", () => {
+  // 每天量幾次、什麼時候量是臨床決定，指引對它有建議。實測模型寫出
+  // 「請於每日早餐前及三餐後固定時間量測血糖」——那是它自己開的處方。
+  const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-06" }, rawSources: {} });
+  const banned = (text) =>
+    parseLabNarrative(JSON.stringify({ narrative: text, cited_values: [] }), facts).bannedPhrases;
+
+  assert.ok(banned("請於每日早餐前及三餐後固定時間量測血糖並記錄").includes("自訂血糖監測頻率"));
+  assert.ok(banned("建議每日固定記錄空腹與餐後血糖").includes("自訂血糖監測頻率"));
+  // 把頻率交回醫療團隊就不算
+  assert.deepEqual(banned("請與醫療團隊確認適合您的血糖監測頻率"), []);
+});
