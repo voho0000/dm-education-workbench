@@ -75,7 +75,7 @@ test("三份固定內容攤在頁面上，逐條看得到，且標明未核准",
   assert.match(html, /報告會用到的固定內容/);
   assert.match(html, /衛教模組 draft-0\.3/);
   assert.match(html, /自我照護模組 draft-0\.2/);
-  assert.match(html, /指引門檻表 2022-guideline-extract-0\.6/);
+  assert.match(html, /指引門檻表 2022-guideline-extract-0\.7/);
   assert.match(html, /DRAFT・未經醫療團隊核准/);
 
   // 不是只列標題——正文要真的在頁面上，才能拿去逐條審。
