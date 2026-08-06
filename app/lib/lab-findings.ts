@@ -470,7 +470,20 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       analyte: "eGFR",
       ruleId: "referral-nephrology",
       severity: "attention",
-      clinicianMessage: `${referralReasons.join("、")}。${r?.statement ?? ""}`,
+      /*
+       * 指引的句子照抄（「應即時轉介」），但前後要說清楚這是回顧資料。
+       *
+       * 這份報告整理最多三年的申報紀錄，而所有數值都是全期取最小／最大——
+       * 三年前住院當下的 eGFR 25 與上個月的 eGFR 25 在這裡長得一模一樣。
+       * 直接寫「應即時轉介」，讀起來像現在要做的事；但我們連那筆是什麼時候
+       * 測的都不知道。與 metformin 的處理一致：指引怎麼寫照抄，但要說明
+       * 它是被什麼觸發的、以及什麼還不知道。
+       */
+      clinicianMessage: `需核對轉介需求：${referralReasons.join("、")}。依指引，${r?.statement ?? ""}（觸發自歷史紀錄${
+        facts.labFeeMonthRange.known
+          ? `，資料涵蓋 ${facts.labFeeMonthRange.value.earliest}–${facts.labFeeMonthRange.value.latest}`
+          : ""
+      }；無採檢日期，無法確認是否為目前狀況，請以最新結果判斷。）`,
       patientMessage: null,
       citation: r?.citation ?? null,
     });

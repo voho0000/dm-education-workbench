@@ -4190,3 +4190,32 @@ test("醫師版的每一段自由文字都要掃到，不只是異常項目的�
   assert.ok(warnIndex > 0, "醫師版要標出這些句子");
   assert.ok(warnIndex < firstFinding, "警語必須在被標記的內容之前");
 });
+
+test("轉介提示是回顧性的，不寫成現在就該做的事", () => {
+  /*
+   * 這份報告整理最多三年的申報紀錄，所有數值都是全期取最小／最大——
+   * 三年前住院當下的 eGFR 25 與上個月的 eGFR 25 在這裡長得一模一樣。
+   * 直接寫「應即時轉介」讀起來像現在要做的事，而我們連那筆是什麼時候
+   * 測的都不知道。與 metformin 的處理一致。
+   */
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-06" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { order_code: "12015C", assay_item_name: "eGFR", assay_value: "25", unit_data: "ml/min/1.73m2", fee_ym: "11201" },
+          { order_code: "12015C", assay_item_name: "eGFR", assay_value: "68", unit_data: "ml/min/1.73m2", fee_ym: "11406" },
+        ],
+      },
+    },
+  });
+  const hit = evaluateThresholds(extractLabFindings(facts), facts).find((item) => item.code === "referral-nephrology");
+
+  assert.ok(hit, "eGFR 曾低於 30 應該要有轉介核對提示");
+  assert.match(hit.clinicianMessage, /需核對/, "開頭要講核對，不是直接下指令");
+  assert.match(hit.clinicianMessage, /觸發自歷史紀錄/);
+  assert.match(hit.clinicianMessage, /無法確認是否為目前狀況/);
+  assert.match(hit.clinicianMessage, /11201–11406/, "要寫出資料涵蓋期間");
+  // 指引原文本身照抄，不改寫
+  assert.match(hit.clinicianMessage, /建議轉介腎臟專科醫師/);
+});
