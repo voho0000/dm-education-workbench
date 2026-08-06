@@ -30,7 +30,7 @@ import {
 import { resolveTargets } from "../app/lib/resolve-targets.ts";
 import { inputFingerprint } from "../app/lib/fingerprint.ts";
 import { formatBatchReview, reviewCase, summarizeBatch } from "../app/lib/batch-review.ts";
-import { parseReportReview } from "../app/lib/report-review.ts";
+import { buildReviewInput, parseReportReview } from "../app/lib/report-review.ts";
 import { assessPublishReadiness, formatReadiness } from "../app/lib/publish-readiness.ts";
 import { GUIDELINE_RULES, GUIDELINE_SOURCES, RULES_APPROVED, RULES_BY_ID, RULES_VERSION, citationShort, citationText, rulesForType } from "../app/lib/guideline-rules.ts";
 import { compareToTargets } from "../app/lib/target-comparison.ts";
@@ -4066,4 +4066,57 @@ test("不得宣稱達到「需醫療團隊定案」的目標", () => {
     parseLabNarrative(JSON.stringify({ narrative: "糖化血色素 6.1 %，已達標。", cited_values: [] }), facts, []).claimedTargets,
     [],
   );
+});
+
+test("宣稱達標的偵測要涵蓋沒有動詞、指標名在前一句的寫法", () => {
+  /*
+   * 實跑抓到三種漏網寫法：
+   *   「在理想目標內」——沒有符合／達到／落在這類動詞
+   *   「醣化血紅素為 6.5 %。落在控制目標內。」——指標名在前一句
+   *   「已達到常見的血糖控制範圍」——同上
+   * 只看單句、只認固定動詞，這三種都會過。
+   */
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-06", BIRTHDAY: "1941-01-01" },
+    rawSources: { labData: { rObject: [{ fee_ym: "11406", assay_item_name: "HbA1c", assay_value: "6.5", unit_data: "%" }] } },
+  });
+  const claimed = (text) =>
+    parseLabNarrative(
+      JSON.stringify({ narrative: text, cited_values: [{ item: "HbA1c", value: "6.5" }] }),
+      facts,
+      ["糖化血色素"],
+    ).claimedTargets.length;
+
+  for (const text of [
+    "醣化血色素數值在理想目標內。",
+    "醣化血紅素為 6.5 %。落在控制目標內。",
+    "糖化血色素落在目標範圍內。",
+    "HbA1c 6.5 %。已達到常見的血糖控制範圍。",
+  ]) {
+    assert.ok(claimed(text) > 0, `應擋下：${text}`);
+  }
+
+  // 明說目標未定案，或指標的目標本來就定案了，都不該擋
+  assert.equal(claimed("糖化血色素為 6.5 %，目標值需由醫療團隊定案。"), 0);
+  assert.equal(claimed("三酸甘油酯 120 mg/dL，落在控制目標內。"), 0);
+});
+
+test("審查器看得到程式算出的目標與追蹤間隔，才分得出誰自訂處方", () => {
+  /*
+   * 沒有這一段，審查器把「每 3 個月檢查一次腎功能」判成模型自訂處方——
+   * 而那個數字是程式從指引表二算出來、餵給模型照抄的。
+   */
+  const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-06" }, rawSources: {} });
+  const sections = { narrative: "測試", shortTerm: "測試", midTerm: "測試" };
+
+  const without = buildReviewInput(sections, "事實", facts);
+  assert.ok(!without.includes("程式依指引算出的目標"));
+
+  const with_ = buildReviewInput(sections, "事實", facts, {
+    targets: [{ metric: "糖化血色素", value: "低於 7.0%" }],
+    followUp: "每 3 個月測一次 eGFR。",
+  });
+  assert.match(with_, /程式依指引算出的目標與追蹤間隔/);
+  assert.match(with_, /照抄不算自訂處方/);
+  assert.match(with_, /每 3 個月測一次 eGFR/);
 });

@@ -22,32 +22,75 @@ import process from "node:process";
 import { formatPatientJson } from "../app/lib/format-patient.ts";
 import { extractPatientFacts, factsForSelectorPrompt } from "../app/lib/patient-facts.ts";
 import {
+  DATA_AUDIT_PROMPT,
   assembleClinicianReport,
   assemblePatientReport,
   decisionsForPrompt,
   parseDataAudit,
   resolvePlan,
 } from "../app/lib/module-plan.ts";
-import { GUIDELINE_RULES, formatRules, RULES_VERSION } from "../app/lib/guideline-rules.ts";
+import { GUIDELINE_RULES, RULES_BY_ID, formatRules, RULES_VERSION } from "../app/lib/guideline-rules.ts";
 import { LAB_REVIEW_PROMPT, labSectionOf, parseLabReview } from "../app/lib/lab-llm.ts";
 import { LAB_NARRATIVE_PROMPT, buildNarrativeInput, parseLabNarrative } from "../app/lib/lab-narrative.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
 import { formatBatchReview, reviewCase, summarizeBatch } from "../app/lib/batch-review.ts";
+import { REPORT_REVIEW_PROMPT, buildReviewInput, formatReportReview, parseReportReview } from "../app/lib/report-review.ts";
+import { assessPublishReadiness, formatReadiness } from "../app/lib/publish-readiness.ts";
+import { inputFingerprint } from "../app/lib/fingerprint.ts";
+import { callGemini } from "../app/lib/gemini-client.ts";
 
 function parseArgs(argv) {
-  const args = { patients: null, out: null, selector: null, only: null };
+  const args = { patients: null, out: null, selector: null, only: null, live: false, model: null };
   for (let i = 0; i < argv.length; i += 1) {
     if (argv[i] === "--patients") args.patients = argv[++i];
     else if (argv[i] === "--out") args.out = argv[++i];
     else if (argv[i] === "--selector") args.selector = argv[++i];
     else if (argv[i] === "--only") args.only = argv[++i].split(",");
+    else if (argv[i] === "--live") args.live = true;
+    else if (argv[i] === "--model") args.model = argv[++i];
   }
   return args;
 }
 
+/*
+ * --live 直接呼叫 Gemini，金鑰只從環境變數讀。
+ *
+ * 這個能力原本只存在於一份沒進版控的暫存腳本裡，暫存區一清就整個消失——
+ * 連帶四次呼叫的接線也要重寫。會用到的東西就該進版控。
+ *
+ * 四次呼叫逐一送出、不併發：一次打三、四個把速率上限打爆，整批會安靜地
+ * 降級成沒有 LLM 的報告，而降級的報告跟成功的報告長得很像。
+ */
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+
+async function callLive(systemPrompt, input, label, model) {
+  const apiKey = process.env.GEMINI_API_KEY;
+  if (!apiKey) throw new Error("--live 需要環境變數 GEMINI_API_KEY，金鑰不從參數傳、也不寫進任何檔案。");
+  for (let attempt = 1; attempt <= 6; attempt += 1) {
+    try {
+      return await callGemini({
+        apiKey,
+        model,
+        systemPrompt,
+        input,
+        signal: new AbortController().signal,
+        direct: true,
+        timeoutMs: 15 * 60 * 1000,
+      });
+    } catch (error) {
+      const message = String(error?.message ?? error);
+      if (!/429|配額|速率/.test(message) || attempt === 6) throw error;
+      const wait = 20_000 * attempt;
+      process.stdout.write(`\n    ${label} 遇到速率上限，${wait / 1000}s 後第 ${attempt + 1} 次嘗試…`);
+      await sleep(wait);
+    }
+  }
+}
+
 const args = parseArgs(process.argv.slice(2));
 if (!args.patients || !args.out) {
-  console.error("用法：--patients <目錄> --out <評估包目錄> [--selector <目錄>] [--only id1,id2]");
+  console.error("用法：--patients <目錄> --out <評估包目錄> [--live] [--model <id>] [--selector <目錄>] [--only id1,id2]");
+  console.error("--live 直接呼叫 Gemini（四次／位），金鑰只從環境變數 GEMINI_API_KEY 讀。");
   process.exit(1);
 }
 
@@ -101,7 +144,57 @@ for (const name of names) {
   // 檢驗判讀：LLM 直接讀原始紀錄自己判斷異常。
   // 程式只做抄寫檢查（引用的數值與項目是否存在於來源），不覆寫它的判定。
   let labReview = null;
-  if (args.selector) {
+  const model = args.model ?? "gemini-3.6-flash";
+  const labInput = labSectionOf(llmText);
+  /*
+   * 網頁版把程式算出的目標與追蹤間隔餵給 ③；批次版原本沒傳，所以同一位病人
+   * 會因為入口不同得到不同報告。兩邊現在給同一份材料。
+   */
+  const narrativeGoals = {
+    targets: plan.targets.targets
+      .filter((item) => item.value && !item.needsClinicianConfirmation)
+      .map((item) => ({
+        metric: item.metric,
+        value: (item.ruleId ? RULES_BY_ID.get(item.ruleId)?.patientStatement : null) ?? item.value,
+      })),
+    followUp: plan.followUp.text,
+  };
+  const narrativeInput = buildNarrativeInput(llmText, facts, narrativeGoals);
+  // 未定案的目標要傳進解析器，否則擋不掉「符合控制目標」——目標是否定案只有這裡知道。
+  const undeterminedMetrics = plan.targets.targets
+    .filter((item) => item.needsClinicianConfirmation || !item.value)
+    .map((item) => item.metric);
+
+  const rawOutputs = {};
+  if (args.live) {
+    process.stdout.write(`${id} 送出呼叫…`);
+    for (const [key, prompt, input, label] of [
+      ["audit", DATA_AUDIT_PROMPT, `${factsForSelectorPrompt(facts)}\n\n${decisionsForPrompt(plan)}`, "①資料稽核"],
+      ["labReview", LAB_REVIEW_PROMPT, labInput, "②檢驗判讀"],
+      ["narrative", LAB_NARRATIVE_PROMPT, narrativeInput, "③檢驗敘述"],
+    ]) {
+      try {
+        rawOutputs[key] = (await callLive(prompt, input, label, model)).text;
+      } catch (error) {
+        console.error(`\n  ${label} 失敗：${String(error?.message ?? error)}`);
+      }
+      await sleep(4000);
+    }
+  }
+
+  const attempt = (raw, parse) => {
+    if (!raw) return null;
+    try {
+      return parse(raw);
+    } catch {
+      return null;
+    }
+  };
+
+  if (args.live) selection = attempt(rawOutputs.audit, parseDataAudit) ?? selection;
+  if (args.live) {
+    labReview = attempt(rawOutputs.labReview, (raw) => parseLabReview(raw, facts));
+  } else if (args.selector) {
     labReview = await readFile(path.join(args.selector, id, "lab.output.json"), "utf8")
       .then((raw) => parseLabReview(raw, facts))
       .catch(() => null);
@@ -109,14 +202,38 @@ for (const name of names) {
 
   // 病人版的檢驗敘述：由 LLM 直接寫，程式驗證數值與禁止事項。
   let labNarrative = null;
-  if (args.selector) {
+  if (args.live) {
+    labNarrative = attempt(rawOutputs.narrative, (raw) => parseLabNarrative(raw, facts, undeterminedMetrics));
+  } else if (args.selector) {
     labNarrative = await readFile(path.join(args.selector, id, "narrative.output.json"), "utf8")
-      .then((text) => parseLabNarrative(text, facts))
+      .then((text) => parseLabNarrative(text, facts, undeterminedMetrics))
       .catch(() => null);
   }
 
-  const patientReport = assemblePatientReport(plan, { ...options, labNarrative: labNarrative ?? undefined });
-  const clinicianReport = assembleClinicianReport(plan, facts, { ...options, labReview: labReview ?? undefined });
+  // 指紋讓一份印出來的報告事後仍可追回是哪一份輸入。網頁版有，批次版原本沒有。
+  const runOptions = { ...options, inputFingerprint: inputFingerprint(llmText) };
+  const patientReport = assemblePatientReport(plan, { ...runOptions, labNarrative: labNarrative ?? undefined });
+  const clinicianReport = assembleClinicianReport(plan, facts, { ...runOptions, labReview: labReview ?? undefined });
+
+  /*
+   * ④ 報告審查。必須在 ③ 之後——它審的就是 ③ 寫出來的三段；③ 失敗就沒東西可審。
+   */
+  let reportReview = null;
+  if (args.live && labNarrative) {
+    const sections = {
+      narrative: labNarrative.narrative,
+      shortTerm: labNarrative.shortTerm,
+      midTerm: labNarrative.midTerm,
+    };
+    const reviewInput = buildReviewInput(sections, factsForSelectorPrompt(facts), facts, narrativeGoals);
+    try {
+      const raw = await callLive(REPORT_REVIEW_PROMPT, reviewInput, "④報告審查", model);
+      rawOutputs.reportReview = raw.text;
+      reportReview = attempt(raw.text, (text) => parseReportReview(text, sections));
+    } catch (error) {
+      console.error(`\n  ④報告審查 失敗：${String(error?.message ?? error)}`);
+    }
+  }
 
   const dir = path.join(args.out, id);
   await mkdir(dir, { recursive: true });
@@ -155,8 +272,35 @@ for (const name of names) {
     audit: selection,
     labReview,
     labNarrative,
-    llmRequested: Boolean(args.selector),
+    llmRequested: args.live || Boolean(args.selector),
   });
+
+  const readiness = assessPublishReadiness({
+    facts,
+    plan,
+    validation,
+    labNarrative,
+    reportReview,
+    caseReview: review,
+    llmRequested: args.live || Boolean(args.selector),
+  });
+  await writeFile(
+    path.join(dir, "12_可發布度與審查標記.txt"),
+    [
+      ...formatReadiness(readiness),
+      "",
+      ...(reportReview ? formatReportReview(reportReview) : ["④ 報告審查未執行或解析失敗。"]),
+    ].join("\n"),
+    "utf8",
+  );
+  for (const [key, file] of [
+    ["audit", "07_原始回應_①資料稽核.txt"],
+    ["labReview", "08_原始回應_②檢驗判讀.txt"],
+    ["narrative", "09_原始回應_③檢驗敘述.txt"],
+    ["reportReview", "10_原始回應_④報告審查.txt"],
+  ]) {
+    if (rawOutputs[key]) await writeFile(path.join(dir, file), rawOutputs[key], "utf8");
+  }
   reviews.push(review);
   if (review.needsReview) {
     await writeFile(

@@ -94,6 +94,8 @@ export const REPORT_REVIEW_PROMPT = `你是糖尿病專科醫師，正在審查�
 
 **處置或劑量建議（treatment-advice）**：不得叫病人開始、停止、調整任何藥物；不得自訂攝取量、運動處方或血糖監測頻率（每天量幾次是臨床決定）。「請與醫療團隊確認監測頻率」是可以的。
 
+**但基準資料裡「程式依指引算出的目標與追蹤間隔」那一段的數字是授權的**——那是從指引表格算出來、餵給模型照抄的材料。報告寫「每 3 個月檢查一次腎功能」如果對得上那一段，就不是自訂處方，不要標記。只有**沒出現在那一段**的數字才算模型自己編的。
+
 **數值與來源不符（value-mismatch）**：報告中的數字與上面的事實對不起來，或掛在錯的項目上。
 
 **對這位病人不適用（not-applicable）**：建議本身沒錯，但與這位病人的狀況衝突。例如對腎功能不全的人建議增加蛋白質或水分攝取。這一類最重要，因為它讀起來完全正常。
@@ -141,6 +143,14 @@ export function buildReviewInput(
   sections: { narrative: string; shortTerm: string; midTerm: string },
   factsText: string,
   facts: PatientFacts,
+  /**
+   * 程式依指引推出的目標與追蹤間隔。
+   *
+   * 沒有這一段，審查器分不出「模型自己編的頻率」與「程式從指引表二算出來、
+   * 餵給模型照抄的頻率」——實測就把「每 3 個月檢查一次腎功能」判成自訂處方，
+   * 而那個數字正是我們給它的。
+   */
+  authorised?: { targets: Array<{ metric: string; value: string }>; followUp: string },
 ): string {
   const limits = [
     facts.labHasDrawDates
@@ -152,9 +162,19 @@ export function buildReviewInput(
       : "糖尿病型別無法從申報資料判定，目標值一律套第 2 型。",
   ];
 
+  const authorisedBlock = authorised
+    ? [
+        "",
+        "【程式依指引算出的目標與追蹤間隔——這些數字是餵給模型的材料，照抄不算自訂處方】",
+        ...authorised.targets.map((item) => `- ${item.metric}：${item.value}`),
+        ...(authorised.followUp ? [authorised.followUp] : []),
+      ]
+    : [];
+
   return [
     "【基準：程式判定出來的事實與檢驗數值】",
     factsText,
+    ...authorisedBlock,
     "",
     "【資料的已知限制】",
     ...limits.map((line) => `- ${line}`),

@@ -234,7 +234,8 @@ function stripBullets(text: string): string {
  * 放行——因為 6.1 確實在來源裡，格式也沒問題。這是 ④ 報告審查抓到的，
  * 但它是程式判得動的事，不該只靠 LLM。
  */
-const MEETS_TARGET = /(符合|達到|已達|落在)[^。\n]{0,8}(控制目標|目標|良好|理想|正常範圍)|已達標|控制良好/;
+const MEETS_TARGET =
+  /(符合|達到|已達|落在|處於|維持在)[^。\n]{0,10}(控制目標|目標|良好|理想|正常範圍|控制範圍)|在[^。\n]{0,8}(目標|範圍)(內|中)|已達標|控制良好|控制得宜/;
 
 /*
  * 指標的別名。程式寫「糖化血色素」，模型可能寫「醣化血紅素」「HbA1c」——
@@ -258,13 +259,23 @@ function aliasesOf(metric: string): string[] {
 
 function claimsUndeterminedTarget(text: string, undeterminedMetrics: string[]): string[] {
   if (!undeterminedMetrics.length) return [];
-  const names = [...new Set(undeterminedMetrics.flatMap(aliasesOf))];
+  const names = [...new Set(undeterminedMetrics.flatMap(aliasesOf))].map((name) => name.toLowerCase());
+  const mentionsMetric = (sentence: string) => {
+    const lower = sentence.toLowerCase();
+    return names.some((name) => lower.includes(name));
+  };
+
+  /*
+   * 指標名常在前一句：「醣化血紅素為 6.5 %。落在控制目標內。」
+   * 只看單句會漏掉後半，而那半句才是宣稱達標的地方。往前看一句。
+   */
+  const sentences = text.split(/[。\n]/);
   const hits: string[] = [];
-  for (const sentence of text.split(/[。\n]/)) {
-    if (!MEETS_TARGET.test(sentence)) continue;
-    if (names.some((name) => sentence.toLowerCase().includes(name.toLowerCase()))) {
-      hits.push(`${sentence.trim()}。`);
-    }
+  for (let i = 0; i < sentences.length; i += 1) {
+    const sentence = sentences[i];
+    if (!sentence.trim() || !MEETS_TARGET.test(sentence)) continue;
+    const context = [sentences[i - 1] ?? "", sentence].join("。");
+    if (mentionsMetric(context)) hits.push(`${sentence.trim()}。`);
   }
   return [...new Set(hits)];
 }
