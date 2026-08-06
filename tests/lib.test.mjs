@@ -30,6 +30,8 @@ import {
 import { resolveTargets } from "../app/lib/resolve-targets.ts";
 import { inputFingerprint } from "../app/lib/fingerprint.ts";
 import { formatBatchReview, reviewCase, summarizeBatch } from "../app/lib/batch-review.ts";
+import { parseReportReview } from "../app/lib/report-review.ts";
+import { assessPublishReadiness, formatReadiness } from "../app/lib/publish-readiness.ts";
 import { GUIDELINE_RULES, GUIDELINE_SOURCES, RULES_APPROVED, RULES_BY_ID, RULES_VERSION, citationShort, citationText, rulesForType } from "../app/lib/guideline-rules.ts";
 import { compareToTargets } from "../app/lib/target-comparison.ts";
 import {
@@ -3760,4 +3762,127 @@ test("檢驗過濾要認得實際資料用的縮寫，且不得誤濾核心指�
   for (const code of ["13007C", "13023C", "13006C", "11002C"]) {
     assert.ok(!sentText([["某培養項目", code]]).includes("某培養項目="), `醫令碼 ${code} 未被濾掉`);
   }
+});
+
+// ── ④ 報告審查與可發布度 ────────────────────────────────────────
+
+const SECTIONS = {
+  narrative: "您的糖化血色素為 8.6 %，高於一般目標 7.0%。",
+  shortTerm: "1. 請與醫療團隊確認適合您的血糖監測頻率。",
+  midTerm: "三個月後回診時複查糖化血色素。",
+};
+
+test("審查器引用報告裡沒有的句子時，那一則不採信且整份標記不可信", () => {
+  // 審查器也會編。編出來的句子代表它在對不存在的內容發表意見——不能只是
+  // 丟掉那一則，因為我們不知道它有沒有同時漏掉真的問題。
+  const parsed = parseReportReview(
+    JSON.stringify({
+      findings: [
+        { quote: "您的糖化血色素為 8.6 %", category: "value-mismatch", reason: "數值正確，這則是對照用", severity: "attention" },
+        { quote: "您的腎功能已經惡化到需要洗腎", category: "diagnosis-inference", reason: "報告裡根本沒這句", severity: "blocking" },
+      ],
+      open_ended: "無",
+    }),
+    SECTIONS,
+  );
+
+  assert.equal(parsed.findings.length, 1, "編造的那一則不得進入 findings");
+  assert.deepEqual(parsed.hallucinatedQuotes, ["您的腎功能已經惡化到需要洗腎"]);
+  assert.equal(parsed.openEndedUsed, true);
+});
+
+test("審查器的引用比對容忍標點與空白差異", () => {
+  // 模型常把全形括號抄成半形、或吃掉空白。因為這種差異就判成編造，
+  // 會讓真正的發現被丟掉。
+  const parsed = parseReportReview(
+    JSON.stringify({
+      findings: [{ quote: "您的糖化血色素為8.6%，高於一般目標7.0%。", category: "other", reason: "測試", severity: "attention" }],
+      open_ended: "無",
+    }),
+    SECTIONS,
+  );
+  assert.deepEqual(parsed.hallucinatedQuotes, []);
+  assert.equal(parsed.findings.length, 1);
+});
+
+test("不認得的類別歸到 other，不得整則丟掉", () => {
+  // 丟掉等於因為分類寫錯就放過一個真的問題。
+  const parsed = parseReportReview(
+    JSON.stringify({
+      findings: [{ quote: "三個月後回診時複查糖化血色素。", category: "made-up-category", reason: "測試", severity: "blocking" }],
+      open_ended: "",
+    }),
+    SECTIONS,
+  );
+  assert.equal(parsed.findings[0].category, "other");
+  assert.equal(parsed.findings[0].severity, "blocking");
+  assert.equal(parsed.openEndedUsed, false, "開放式那一題沒回答要記錄下來");
+});
+
+test("可發布度：硬性問題直接歸零，程度問題才扣分", () => {
+  const raw = {
+    userInput: { REPORT_DATE: "2026-08-06", R2: 2 },
+    rawSources: {
+      medication: { rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_ing_name: "METFORMIN HCL" }] },
+      labData: { rObject: [{ fee_ym: "11406", assay_item_name: "HbA1c", assay_value: "8.6", unit_data: "%" }] },
+    },
+  };
+  const facts = extractPatientFacts(raw);
+  const plan = resolvePlan(null, facts);
+  const narrative = { ...SECTIONS, foundAfterAll: [], unverifiedValues: [], uncitedNumbers: [], bannedPhrases: [] };
+  // 用同一份來源產生比對文字，否則 8.6 追溯不到、numbers-supported 會失敗
+  const patientText = formatPatientJson(raw);
+  const report = assemblePatientReport(plan, { reportDate: "2026-08-06", dataCutoff: null, labNarrative: narrative });
+  const validation = validateReport({ report, patientText, profile: "modules" });
+
+  const assess = (labNarrative, reportReview) => {
+    const caseReview = reviewCase({ id: "T", facts, plan, validation, audit: null, labReview: null, labNarrative, llmRequested: false });
+    return assessPublishReadiness({ facts, plan, validation, labNarrative, reportReview, caseReview, llmRequested: false });
+  };
+
+  // 審查器標了 blocking：直接歸零，不管其他項目多好
+  const blocked = assess(narrative, {
+    findings: [{ quote: SECTIONS.midTerm, category: "treatment-advice", reason: "測試", severity: "blocking" }],
+    hallucinatedQuotes: [],
+    openEndedUsed: true,
+  });
+  assert.equal(blocked.score, 0);
+  assert.equal(blocked.band, "blocked");
+
+  // 編造引用同樣歸零——那是「這次審查不可信」，不是「報告沒問題」
+  const untrusted = assess(narrative, { findings: [], hallucinatedQuotes: ["不存在的句子"], openEndedUsed: true });
+  assert.equal(untrusted.score, 0);
+  assert.equal(untrusted.band, "blocked");
+
+  // attention 是程度問題，扣分不歸零
+  const soft = assess(narrative, {
+    findings: [{ quote: SECTIONS.shortTerm, category: "vague", reason: "測試", severity: "attention" }],
+    hallucinatedQuotes: [],
+    openEndedUsed: true,
+  });
+  assert.ok(soft.score > 0 && soft.score < 100, `attention 應該扣分而非歸零：${soft.score}`);
+  assert.equal(soft.band, "review");
+});
+
+test("可發布度的每一項扣分都要說得出原因與下一步", () => {
+  // 只給一個數字等於換一種寫法的 pass/fail——人還是得整份重讀才知道要看哪裡。
+  const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-06" }, rawSources: {} });
+  const plan = resolvePlan(null, facts);
+  const patientText = formatPatientJson({ userInput: { REPORT_DATE: "2026-08-06" }, rawSources: {} });
+  const report = assemblePatientReport(plan, { reportDate: "2026-08-06", dataCutoff: null });
+  const validation = validateReport({ report, patientText, profile: "modules" });
+  const caseReview = reviewCase({ id: "T", facts, plan, validation, audit: null, labReview: null, labNarrative: null, llmRequested: false });
+  const readiness = assessPublishReadiness({
+    facts, plan, validation, labNarrative: null, reportReview: null, caseReview, llmRequested: false,
+  });
+
+  assert.ok(readiness.deductions.length > 0, "這份資料很空，應該要有扣分");
+  for (const item of readiness.deductions) {
+    assert.ok(item.reason.length > 0, `${item.code} 缺少原因`);
+    assert.ok(item.action.length > 0, `${item.code} 缺少下一步`);
+  }
+  // DRAFT 一定要出現在明細裡，否則滿分會被讀成可以直接給病人
+  assert.ok(readiness.deductions.some((item) => item.code === "content-draft"));
+  // 呈現時要講清楚分數的意義
+  assert.ok(formatReadiness(readiness).some((line) => line.includes("不代表報告內容一定正確")));
 });
