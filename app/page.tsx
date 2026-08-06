@@ -643,7 +643,7 @@ export default function Home() {
                 ? "檢驗有採檢日"
                 : "檢驗只有費用年月、沒有採檢日，因此後面所有敘述都不得聲稱時序",
               "R／PR 欄位缺 key 就記成「未提供」，不補 0",
-              `整理成好讀文字後再濾一次：微生物培養、藥敏、輸血配合、血液氣體、白血球分類、發炎與凝血。這些 prompt 本來就叫模型忽略，送了再叫它不要看等於付兩次錢。上面兩份可以直接對照，${
+              `送出前做兩件事：移除 userId、生日換算成年齡；再濾掉微生物培養、藥敏、輸血配合、血液氣體、白血球分類、發炎與凝血。這些 prompt 本來就叫模型忽略，送了再叫它不要看等於付兩次錢。上面兩份可以直接對照，${
                 llmTextVerbatim && llmText
                   ? `濾掉 ${formatNumber(charCount(llmTextVerbatim) - charCount(llmText))} 字`
                   : "看濾掉了什麼"
@@ -652,8 +652,8 @@ export default function Home() {
             ]
           : [],
         outputs: [
-          { label: "① 整理成 LLM 好讀文字（全部紀錄）", text: llmTextVerbatim },
-          { label: "② 濾掉與糖尿病無關的檢驗（這份才送給 ②③）", text: llmText },
+          { label: "① 整理版（完整・逐欄照抄，不送出）", text: llmTextVerbatim },
+          { label: "② 送出版（去識別・濾過，這份才送給 ②③）", text: llmText },
           { label: "確定性事實（給下一站判定）", text: factsText },
         ],
       },
