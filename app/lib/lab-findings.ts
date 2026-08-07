@@ -325,6 +325,49 @@ const CORE_ANALYTES: Array<[Analyte, string]> = [
   ["triglyceride", "三酸甘油酯"],
 ];
 
+/**
+ * 病人版會講到的檢驗項目。**允許清單，不是排除清單。**
+ *
+ * 資料負責人（醫師）的決定：急性的檢驗（血鉀、血鈉這類）給醫師看就好，
+ * 病人端只留糖尿病照護需要的——糖化血色素、血糖、血脂、腎功能。
+ *
+ * 理由在診間那一端：申報資料沒有採檢日，一個血鉀 2.4 可能是好幾年前住院
+ * 時測的。把它寫進病人版，病人只能拿著一個沒有脈絡的數字去問醫師，而醫師
+ * 查不到來源也接不住。這類數值對醫師有用（他有病歷可以對），對病人沒有。
+ *
+ * 用允許清單是因為方向不對稱：漏掉一項糖尿病相關的檢驗，病人少看到一段
+ * 衛教；多放一項不相關的，病人拿著看不懂的異常值去診間。以後新增的檢驗
+ * 預設不會流到病人版，要放進來得有人明確加。
+ */
+export const PATIENT_LAB_ANALYTES: ReadonlySet<Analyte> = new Set<Analyte>([
+  "HbA1c",
+  "fasting-glucose",
+  "postprandial-glucose",
+  "glucose-unspecified",
+  "LDL-C",
+  "HDL-C",
+  "triglyceride",
+  "eGFR",
+  "creatinine",
+  "UACR",
+]);
+
+/**
+ * 糖尿病照護相關、但沒有對應 Analyte 的項目名稱。
+ *
+ * 尿蛋白與尿糖是糖尿病腎臟與血糖評估的一部分，只是沒有被歸進上面的列舉。
+ * 少了這一條，病人版會漏掉蛋白尿——那是 DCSI 腎臟分項的核心依據之一。
+ */
+const PATIENT_LAB_EXTRA_NAMES =
+  /尿蛋白|蛋白.{0,2}尿液|Protein.*(urine|尿)|微量白蛋白|Microalbumin|尿糖|Glucose.*(urine|尿)|糖.{0,2}尿液|總膽固醇|Cholesterol/i;
+
+/** 這個項目名稱該不該出現在病人版。 */
+export function isPatientLabItem(itemName: string, unit?: string | null): boolean {
+  const analyte = analyteForItemName(itemName, unit);
+  if (analyte) return PATIENT_LAB_ANALYTES.has(analyte);
+  return PATIENT_LAB_EXTRA_NAMES.test(itemName);
+}
+
 export function missingCoreAnalytes(findings: AnalyteFinding[]): string[] {
   const present = new Set(findings.map((item) => item.analyte));
   return CORE_ANALYTES.filter(([analyte]) => !present.has(analyte)).map(([, label]) => label);
@@ -605,7 +648,11 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       ruleId: null,
       severity: potassium.min < 3.0 || potassium.max > 6.0 ? "urgent" : "attention",
       clinicianMessage: `K 曾出現${low ? "偏低" : "偏高"}數值（${detail}${rangeInline(potassium)} mmol/L）。${NOT_IN_GUIDELINE}`,
-      patientMessage: `您的資料中曾出現${low ? "偏低" : "偏高"}的血鉀數值（${detail} mmol/L）。血鉀太${low ? "低" : "高"}可能影響心跳與肌肉力量${low ? "，利尿劑與腹瀉嘔吐都可能造成" : "，腎功能下降時較容易發生"}。${handoffNote(potassium, low ? potassium.min : potassium.max)}`,
+      /*
+       * 病人版不列。急性檢驗給醫師看就好——見 PATIENT_LAB_ANALYTES。
+       * 病人拿著一個沒有採檢日的數值去診間，醫師查不到來源也接不住。
+       */
+      patientMessage: null,
       citation: null,
     });
   }
@@ -619,8 +666,11 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       ruleId: null,
       severity: "urgent",
       clinicianMessage: `Na 曾出現異常值（${detail}${rangeInline(sodium)} mmol/L）。${NOT_IN_GUIDELINE}`,
-      patientMessage:
-        `您的資料中曾出現異常的血鈉數值。${handoffNote(sodium, sodium.min < 130 ? sodium.min : sodium.max)}`,
+      /*
+       * 病人版不列。急性檢驗給醫師看就好——見 PATIENT_LAB_ANALYTES。
+       * 病人拿著一個沒有採檢日的數值去診間，醫師查不到來源也接不住。
+       */
+      patientMessage: null,
       citation: null,
     });
   }
@@ -642,7 +692,11 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       severity: hb.min < 8 ? "urgent" : "attention",
       // 糖化血色素失真由下面那一則專門處理，這裡不重複。
       clinicianMessage: `Hb 曾出現 ${hb.min} g/dL${range(hb)}${kidneyImpaired ? "，合併腎功能不全，需考慮腎性貧血" : ""}。${NOT_IN_GUIDELINE}`,
-      patientMessage: `您的資料中曾出現偏低的血色素（${hb.min} g/dL），也就是貧血。${kidneyImpaired ? "腎功能下降的人比較容易發生貧血。" : ""}貧血可能讓您容易疲倦、喘或頭暈，也可能讓糖化血色素這個指標不準。${handoffNote(hb, hb.min)}`,
+      /*
+       * 病人版不列。急性檢驗給醫師看就好——見 PATIENT_LAB_ANALYTES。
+       * 病人拿著一個沒有採檢日的數值去診間，醫師查不到來源也接不住。
+       */
+      patientMessage: null,
       citation: null,
     });
   }

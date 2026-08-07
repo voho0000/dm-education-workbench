@@ -55,7 +55,7 @@ import {
 import { parseLabReview, formatLabReview, labSectionOf, LAB_REVIEW_PROMPT } from "../app/lib/lab-llm.ts";
 import { findUnsupportedClaims } from "../app/lib/unsupported-claims.ts";
 import { analyteForItemName, evaluateThresholds, extractLabFindings, kidneyLabEvidence, lowestMeasuredGlucose } from "../app/lib/lab-findings.ts";
-import { parseLabNarrative, formatLabNarrative, LAB_NARRATIVE_PROMPT } from "../app/lib/lab-narrative.ts";
+import { parseLabNarrative, formatLabNarrative, buildNarrativeInput, LAB_NARRATIVE_PROMPT } from "../app/lib/lab-narrative.ts";
 import { validateReport } from "../app/lib/validate-report.ts";
 import { extractSymbol, extractSymbols } from "../app/lib/source-extract.ts";
 
@@ -1058,7 +1058,9 @@ test("危險的電解質數值會被標記為 urgent", () => {
   assert.ok(kHit, "血鉀 2.4 必須被標記");
   assert.equal(kHit.severity, "urgent");
   assert.match(kHit.clinicianMessage, /2\.4/);
-  assert.ok(kHit.patientMessage, "病人也要被告知去回診確認");
+  // 病人版不列這一則。急性檢驗給醫師看就好——病人拿著一個沒有採檢日的
+  // 數值去診間，醫師查不到來源也接不住。
+  assert.equal(kHit.patientMessage, null, "血鉀不該出現在病人版");
 
   const lowNa = withLabs([{ assay_item_name: "Na", assay_value: "122", unit_data: "mmol/L" }]);
   assert.equal(lowNa.labThresholds.find((h) => h.code === "sodium-abnormal")?.severity, "urgent");
@@ -1488,7 +1490,8 @@ test("血鉀 3.0–3.3 這種整批偏低不會被漏掉", () => {
   });
   const hits = resolvePlan(null, facts).labThresholds.filter((h) => h.code === "potassium-abnormal");
   assert.equal(hits.length, 1, "低於 3.5 就是低血鉀");
-  assert.match(hits[0].patientMessage, /偏低/);
+  assert.match(hits[0].clinicianMessage, /偏低/);
+  assert.equal(hits[0].patientMessage, null, "電解質只給醫師版");
 });
 
 test("腎功能不全時病人版必須說明糖化血色素可能不準", () => {
@@ -1542,7 +1545,7 @@ test("需要撥打 119 的情況排在儘速就醫之前", () => {
   }
 });
 
-test("數值的說明就貼在該數值下面", () => {
+test("數值的說明就貼在該數值下面，且病人版只列糖尿病照護相關的檢驗", () => {
   const facts = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03" },
     rawSources: {
@@ -1555,11 +1558,16 @@ test("數值的說明就貼在該數值下面", () => {
     },
   });
   const report = assemblePatientReport(resolvePlan(null, facts), { reportDate: "2026-08-03", dataCutoff: null });
-  // 只看數值區塊；開頭的「先看這幾件事」也會出現「血鈉異常」這個短標題。
-  const lines = report.slice(report.indexOf("您的其他檢驗數值")).split("\n");
-  const index = lines.findIndex((l) => /^・血鈉：/.test(l.trim()));
-  assert.ok(index !== -1, "應列出血鈉");
-  assert.match(lines[index + 1], /血鈉/, "說明必須緊接在數值下一行");
+  const lines = report.split("\n");
+
+  // 說明要緊接在數值下一行，不能掉到區塊最後變成孤兒。
+  const index = lines.findIndex((l) => /^・糖化血色素/.test(l.trim()));
+  assert.ok(index !== -1, "應列出糖化血色素");
+  assert.match(lines[index + 1], /糖化血色素|8\.1/, "說明必須緊接在數值下一行");
+
+  // 血鈉整則移到醫師版。留在清單裡但說明被拿掉，會變成一個沒有任何解釋的
+  // 異常數字——那比原本更糟。
+  assert.ok(!/・血鈉/.test(report), "病人版不該列出血鈉");
 });
 
 test("模組教了要看哪些檢查，資料裡沒有的要講出來", () => {
@@ -1878,9 +1886,14 @@ test("病人版的分區與排版讓一般民眾讀得下去", () => {
   // 段落內的數值標題要帶器官名，才不會和文末的「您的其他檢驗數值」撞名
   assert.match(report, /您的腎臟相關數值：/);
 
-  // 數值是資訊不是待辦，不能和行動項目用同一種編號
-  assert.ok(!/^\d+\. 血鈉：/m.test(report), "數值清單不用數字編號");
-  assert.match(report, /^・血鈉：/m);
+  // 數值是資訊不是待辦，不能和行動項目用同一種編號。
+  // 用「項目：數字＋單位」的形狀判定，不綁特定分析項——電解質移出病人版
+  // 之後，原本拿血鈉當例子的寫法就失效了。
+  assert.ok(
+    !/^\d+\. [^\n：]{2,12}：[\d<>≧≦]/m.test(report),
+    "數值清單不用數字編號",
+  );
+  assert.match(report, /^・[^\n：]{2,20}：/m, "數值用・起始");
 
   // 兩個「要做的事」區塊合成一個
   assert.match(report, /【預防叮嚀：日常照護】/);
@@ -1981,9 +1994,10 @@ test("醫師版檢驗項目一律英文縮寫在前，病人版一律中文在�
 
   // 病人版相反：中文在前
   const patient = assemblePatientReport(plan, { reportDate: "2026-08-04", dataCutoff: null });
-  assert.match(patient, /血鉀：/);
   assert.match(patient, /腎絲球過濾率（eGFR）/);
   assert.ok(!/^・K（/m.test(patient), "病人版不以英文縮寫起始");
+  // 電解質只留在醫師版，所以這裡不再拿血鉀當中文命名的例子。
+  assert.ok(!/血鉀/.test(patient), "電解質不進病人版");
 });
 
 test("醫師版的敘述句也用英文縮寫，不與清單相反", () => {
@@ -4475,24 +4489,26 @@ test("HbA1c 失真不宣稱方向", () => {
 });
 
 test("異常值要帶著醫師接得住的脈絡：出處、是哪一筆、以及一份能遞出去的文件", () => {
-  // 資料負責人（醫師）指出：病人在診間突然講一個血鉀 2.4，醫師不知道這是
-  // 哪來的、什麼時候的，也無從查起——那筆可能是好幾年前的申報紀錄。
-  // 只寫「回診時主動提出」等於把一個接不住的提問丟給醫師。
+  // 資料負責人（醫師）指出：病人在診間突然講一個數值，醫師不知道這是哪來
+  // 的、什麼時候的，也無從查起——那筆可能是好幾年前的申報紀錄。只寫
+  // 「回診時主動提出」等於把一個接不住的提問丟給醫師。
+  //
+  // 電解質那類已經整個移出病人版，留在病人版的低血糖仍然需要這段脈絡。
   const facts = extractPatientFacts({
     userInput: { REPORT_DATE: "2026-08-03", R1: 2 },
     rawSources: {
       labData: {
         rObject: [
-          { fee_ym: "202401", order_code: "09021C", order_name: "鉀",
-            assay_item_name: "K", assay_value: "2.4", unit_data: "mmol/L" },
-          { fee_ym: "202512", order_code: "09021C", order_name: "鉀",
-            assay_item_name: "K", assay_value: "3.1", unit_data: "mmol/L" },
+          { fee_ym: "202401", order_code: "09005C", order_name: "血液及體液葡萄糖-空腹",
+            assay_item_name: "Glu-AC", assay_value: "45", unit_data: "mg/dL" },
+          { fee_ym: "202512", order_code: "09005C", order_name: "血液及體液葡萄糖-空腹",
+            assay_item_name: "Glu-AC", assay_value: "120", unit_data: "mg/dL" },
         ],
       },
     },
   });
   const hit = evaluateThresholds(extractLabFindings(facts), facts).find(
-    (item) => item.code === "potassium-abnormal",
+    (item) => item.code === "hypoglycemia",
   );
   assert.ok(hit.patientMessage.includes("健保申報紀錄"), "要說出處");
   assert.ok(hit.patientMessage.includes("把這份報告帶去給醫師看"), "要遞得出文件，不是靠病人轉述");
@@ -4561,4 +4577,45 @@ test("數字比對看數值，不看小數位數", () => {
     profile: "modules",
   }).results.find((item) => item.id === "numbers-supported");
   assert.ok(!invented.passed, "來源沒有的 9.9 必須被抓出來");
+});
+
+test("餵給病人版敘述器的檢驗只有糖尿病照護相關的", () => {
+  // 資料負責人（醫師）的決定：急性檢驗給醫師看就好，病人端只留糖尿病照護
+  // 需要的。靠 prompt 交代「不要寫電解質」不夠——這個專案已經三次看到模型
+  // 守住字面卻從別處繞過去。看不到的東西寫不出來，比再加一條禁令可靠。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "09006C", order_name: "糖化血色素",
+            assay_item_name: "HbA1c", assay_value: "8.1", unit_data: "%" },
+          { fee_ym: "202512", order_code: "09021C", order_name: "鉀",
+            assay_item_name: "K", assay_value: "2.4", unit_data: "mmol/L" },
+          { fee_ym: "202512", order_code: "09026C", order_name: "血清麩胺酸丙酮酸轉氨基脢",
+            assay_item_name: "SGPT", assay_value: "85", unit_data: "U/L" },
+        ],
+      },
+    },
+  });
+  const input = buildNarrativeInput(formatPatientJson({
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "09006C", order_name: "糖化血色素",
+            assay_item_name: "HbA1c", assay_value: "8.1", unit_data: "%" },
+          { fee_ym: "202512", order_code: "09021C", order_name: "鉀",
+            assay_item_name: "K", assay_value: "2.4", unit_data: "mmol/L" },
+          { fee_ym: "202512", order_code: "09026C", order_name: "血清麩胺酸丙酮酸轉氨基脢",
+            assay_item_name: "SGPT", assay_value: "85", unit_data: "U/L" },
+        ],
+      },
+    },
+  }), facts);
+
+  assert.ok(/HbA1c/.test(input), "糖化血色素要留著");
+  assert.ok(!/- K=/.test(input), "血鉀不該餵給病人版");
+  assert.ok(!/- SGPT=/.test(input), "肝功能不該餵給病人版");
+  assert.match(input, /另有 \d+ 組檢驗與糖尿病照護無關/, "要說明濾掉了幾組，並要求不要提及");
 });

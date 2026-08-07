@@ -18,7 +18,7 @@
  */
 
 import { GUIDELINE_RULES } from "./guideline-rules.ts";
-import { extractLabFindings, missingCoreAnalytes } from "./lab-findings.ts";
+import { extractLabFindings, isPatientLabItem, missingCoreAnalytes } from "./lab-findings.ts";
 import { labSectionOf } from "./lab-llm.ts";
 import type { PatientFacts } from "./patient-facts.ts";
 import { claimLabels, findUnsupportedClaims } from "./unsupported-claims.ts";
@@ -30,7 +30,7 @@ export const LAB_NARRATIVE_PROMPT = `你要為一位糖尿病人寫「檢驗數�
 **那份清單是待你核對的假設，不是事實。** 它是程式用項目名稱比對出來的，而各院的名稱寫法差很多（同一個檢驗可能寫成 Glu-AC、GLU_AC 或血液及體液葡萄糖），程式曾經因此整批漏抓。請你自己在紀錄裡找一遍：確實找不到的才寫進文中；若你在紀錄裡找到了，就不要說它沒做，並把它列進 found_after_all。
 
 寫作原則：
-- 依生理系統分段，例如血糖、腎臟、血液、電解質。同一段裡把相關的數值串起來講，不要一項一句。
+- 依生理系統分段，例如血糖控制、腎臟、血脂。同一段裡把相關的數值串起來講，不要一項一句。輸入只會給你糖尿病照護相關的檢驗，其餘（電解質、肝功能、血液學等）由醫師版負責，不要提及也不要說它們缺漏。
 - **只有超出目標的數值才做詮釋。**這是最重要的一條寫作規則：
 
   - **超出目標**：說明這個項目是在測什麼、為什麼值得注意、可以做什麼。這是報告的重點，篇幅留給這裡。但不要從一個異常值往回推器官出了什麼問題——「顯示腎臟過濾屏障受損」「反映肝細胞損傷」這類寫法就是在下診斷，只是換成機轉的講法。
@@ -91,6 +91,56 @@ export const LAB_NARRATIVE_PROMPT = `你要為一位糖尿病人寫「檢驗數�
  * 敘述器的完整輸入。網頁與管線共用同一個組裝函式——先前兩邊各自拼字串，
  * 只要有一邊忘了加缺檢清單，那一邊的輸出就會少一段而沒有任何症狀。
  */
+/**
+ * 只留糖尿病照護相關的檢驗，其餘不餵給病人版的敘述器。
+ *
+ * 靠 prompt 交代「不要寫電解質」不夠——這一輪已經看過三次模型守住字面卻
+ * 從別的地方繞過去。看不到的東西寫不出來，這比再加一條禁令可靠。
+ *
+ * 檢驗段的格式是「費用年月｜醫令碼｜醫令名稱｜檢體」開頭，底下接
+ * 「- 項目=值｜參考:…」。整組保留或整組丟掉，依組內有沒有任何一個項目
+ * 屬於病人版範圍。
+ */
+function patientLabSection(section: string): string {
+  if (!section) return section;
+  const lines = section.split("\n");
+  const kept: string[] = [];
+  let block: string[] = [];
+  let blockWanted = false;
+  let dropped = 0;
+
+  const flush = () => {
+    if (!block.length) return;
+    if (blockWanted) kept.push(...block);
+    else dropped += 1;
+    block = [];
+    blockWanted = false;
+  };
+
+  for (const line of lines) {
+    if (/^\d{6}｜/.test(line)) {
+      flush();
+      block = [line];
+      continue;
+    }
+    if (!block.length) {
+      kept.push(line);
+      continue;
+    }
+    block.push(line);
+    const item = line.match(/^- ([^=｜]+)/);
+    if (item && isPatientLabItem(item[1].trim())) blockWanted = true;
+  }
+  flush();
+
+  if (dropped) {
+    kept.push(
+      `（另有 ${dropped} 組檢驗與糖尿病照護無關或屬醫師判讀範圍，未列於此。不要在文中提及它們，也不要說它們缺漏。）`,
+    );
+  }
+  return kept.join("\n");
+}
+
 export function buildNarrativeInput(
   llmText: string,
   facts: PatientFacts,
@@ -104,7 +154,7 @@ export function buildNarrativeInput(
 ): string {
   const missing = missingCoreAnalytes(extractLabFindings(facts));
   return [
-    labSectionOf(llmText),
+    patientLabSection(labSectionOf(llmText)),
     "【程式初步判定：可能完全沒有紀錄的核心指標（待你核對）】",
     missing.length ? missing.map((item) => `- ${item}`).join("\n") : "（無，核心指標都有紀錄）",
     "【程式依指引推出的目標值（中期目標一律照抄，不得自訂）】",

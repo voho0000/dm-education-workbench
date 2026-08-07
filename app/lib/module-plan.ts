@@ -28,6 +28,7 @@ import type { PatientFacts } from "./patient-facts.ts";
 import { SHARED_CARE_BLOCKS, followUpForClinician, followUpSchedule } from "./shared-care.ts";
 import {
   describeRange,
+  PATIENT_LAB_ANALYTES,
   describeRangeForClinician,
   evaluateThresholds,
   extractLabFindings,
@@ -538,7 +539,15 @@ export function resolvePlan(audit: DataAudit | null, facts: PatientFacts): Resol
     // 輕重之分靠排序表達，不靠在前面加一個摘要區塊。
     // 摘要區塊只會列出「血鈉異常」這種病人看不懂又無從行動的臨床名詞，
     // 而且緊接著的資料限制說明會立刻否定它。
+    /*
+     * 病人版只列糖尿病照護相關的檢驗——見 PATIENT_LAB_ANALYTES。
+     *
+     * 少了這個過濾，血鈉 122 會以「・血鈉：122 mmol/L」的樣子留在清單裡，
+     * 而它的說明已經移到醫師版，於是變成一個沒有任何解釋的數字。那比原本
+     * 更糟：病人看到一個看不懂的異常值，卻連「該做什麼」都沒有。
+     */
     labNoteEntries: labFindings
+      .filter((f) => PATIENT_LAB_ANALYTES.has(f.analyte))
       .filter((f) => !inlined.has(f.analyte))
       .map((f) => {
         // 說明有兩個來源：門檻判定與目標比對。先前只配對前者，導致
