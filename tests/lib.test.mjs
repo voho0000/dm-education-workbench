@@ -4534,3 +4534,11 @@ test("講目標不算宣稱數值狀態", () => {
     assert.ok(findUnsupportedClaims(text, "patient").length > 0, `這句該被標：${text}`);
   }
 });
+
+test("敘述器的寫作原則不得誘導它推論器官狀態", () => {
+  // 「說明它代表什麼」實測誘出「顯示腎臟的過濾屏障有受損現象」——模型守住
+  // 了字面（沒寫病名）卻用機轉繞過去，連兩輪讓不同病人的報告硬性歸零。
+  assert.ok(!/說明它代表什麼/.test(LAB_NARRATIVE_PROMPT), "不得再要求說明「它代表什麼」");
+  assert.ok(/用機轉描述也算/.test(LAB_NARRATIVE_PROMPT), "禁止事項要涵蓋機轉寫法");
+  assert.ok(/顯示腎臟過濾屏障受損/.test(LAB_NARRATIVE_PROMPT), "要給出實際踩過的反例");
+});
