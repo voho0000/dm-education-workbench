@@ -613,7 +613,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       severity: hb.min < 8 ? "urgent" : "attention",
       // 糖化血色素失真由下面那一則專門處理，這裡不重複。
       clinicianMessage: `Hb 曾出現 ${hb.min} g/dL${range(hb)}${kidneyImpaired ? "，合併腎功能不全，需考慮腎性貧血" : ""}。${NOT_IN_GUIDELINE}`,
-      patientMessage: `您的資料中曾出現偏低的血色素（${hb.min} g/dL），也就是貧血。${kidneyImpaired ? "腎功能下降的人比較容易發生貧血。" : ""}貧血可能讓您容易疲倦、喘或頭暈，也會讓糖化血色素這個指標看起來比實際情況好。請在回診時主動提出。`,
+      patientMessage: `您的資料中曾出現偏低的血色素（${hb.min} g/dL），也就是貧血。${kidneyImpaired ? "腎功能下降的人比較容易發生貧血。" : ""}貧血可能讓您容易疲倦、喘或頭暈，也可能讓糖化血色素這個指標不準。請在回診時主動提出。`,
       citation: null,
     });
   }
@@ -643,7 +643,18 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       analyte: "HbA1c",
       ruleId: "hba1c-unreliable",
       severity: "attention",
-      clinicianMessage: `HbA1c ${a1c.min === a1c.max ? a1c.min : `${a1c.min}–${a1c.max}`} % 在${kidneyImpaired ? "腎功能不全" : ""}${kidneyImpaired && persistentAnaemia ? "合併" : ""}${persistentAnaemia ? "貧血" : ""}的情況下可能低估實際血糖，建議併用自我血糖監測或糖化白蛋白判讀。`,
+      /*
+       * 不講失真的方向。
+       *
+       * 原本兩邊都寫「偏低／低估」。我們引用的表九註 1（p.18）只說「可能
+       * 無法代表平均血糖」，沒有講方向——而方向確實推不出來：缺鐵性貧血
+       * 可能讓 HbA1c 假性偏高，溶血、出血、輸血則讓它偏低，腎病變兩種都有。
+       * 要判方向得知道貧血成因、紅血球壽命與輸血史，這批申報資料一項都沒有。
+       *
+       * 這是獨立審查抓到的，而且是我自己把它加重的：上一輪為了修「假達標」
+       * 重寫這句時，順手把方向寫得更明確。
+       */
+      clinicianMessage: `HbA1c ${a1c.min === a1c.max ? a1c.min : `${a1c.min}–${a1c.max}`} % 在${kidneyImpaired ? "腎功能不全" : ""}${kidneyImpaired && persistentAnaemia ? "合併" : ""}${persistentAnaemia ? "貧血" : ""}的情況下可能無法代表平均血糖，失真方向需視成因而定，建議併用自我血糖監測或糖化白蛋白判讀。`,
       /*
        * 不講「看起來在目標範圍內」。
        *
@@ -654,7 +665,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
        * 這一則要講的是「這個數字可能低估」，那件事跟數值在不在目標內無關。
        * 達標與否交給門檻判定那一條去講，這裡只陳述數字與失真方向。
        */
-      patientMessage: `您的糖化血色素是 ${a1c.min === a1c.max ? a1c.min : `${a1c.min}–${a1c.max}`}%，但這個數字對您可能不準。${kidneyImpaired ? "腎功能下降" : ""}${kidneyImpaired && persistentAnaemia ? "與" : ""}${persistentAnaemia ? "貧血" : ""}都會讓它比實際血糖低，也就是您的實際血糖可能比這個數字看起來更高。請不要只看這個數字判斷血糖控制，回診時請醫療團隊一起看您平時的血糖紀錄。`,
+      patientMessage: `您的糖化血色素是 ${a1c.min === a1c.max ? a1c.min : `${a1c.min}–${a1c.max}`}%，但這個數字對您可能不準。${kidneyImpaired ? "腎功能下降" : ""}${kidneyImpaired && persistentAnaemia ? "與" : ""}${persistentAnaemia ? "貧血" : ""}都可能讓它偏離您真正的平均血糖，偏高或偏低要看原因，這份資料判斷不出來。請不要只看這個數字判斷血糖控制，回診時請醫療團隊一起看您平時的血糖紀錄。`,
       citation: null,
     });
   }

@@ -4447,3 +4447,29 @@ test("低血糖分級用指引自己的講法，不自己升級成「嚴重」",
   assert.ok(hit.clinicianMessage.includes("第二級低血糖"), "要用指引表一的分級講法");
   assert.ok(hit.clinicianMessage.includes("空腹血糖"), "要指名是哪一種血糖");
 });
+
+test("HbA1c 失真不宣稱方向", () => {
+  // 我們引用的表九註 1 只說「可能無法代表平均血糖」，沒有講方向。方向也
+  // 確實推不出來：缺鐵性貧血可能假性偏高，溶血與輸血讓它偏低，腎病變兩種
+  // 都有。要判方向得知道貧血成因與輸血史，申報資料一項都沒有。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", R1: 2 },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "11412", order_code: "09006C", order_name: "糖化血色素",
+            assay_item_name: "HbA1c", assay_value: "6.5", unit_data: "%" },
+          { fee_ym: "11412", order_code: "09001C", order_name: "血色素",
+            assay_item_name: "Hb", assay_value: "9.5", unit_data: "g/dL" },
+        ],
+      },
+    },
+  });
+  const hit = evaluateThresholds(extractLabFindings(facts), facts).find(
+    (item) => item.code === "hba1c-unreliable",
+  );
+  assert.ok(hit, "貧血時必須提醒 HbA1c 可能不準");
+  for (const text of [hit.clinicianMessage, hit.patientMessage]) {
+    assert.ok(!/低估|比實際血糖低|看起來比實際情況好/.test(text), `不得宣稱失真方向：${text}`);
+  }
+});
