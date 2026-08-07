@@ -213,8 +213,18 @@ const GUIDELINE_NUMBERS = new Set(
   ),
 );
 
+/*
+ * 取值時要跳過夾在字母裡的數字。
+ *
+ * 原本抓字串裡第一個數字。模型有時把項目名塞進 value 欄位，寫成
+ * 「HbA1c=6.5 %」——第一個數字是 HbA1c 裡的那個 1，於是 6.5 永遠核不到，
+ * 一份完全正確的引用被判成「核不到來源」而整份擋下。實測就是這樣擋的。
+ *
+ * 只排除「緊接在字母或數字後面」的數字（A1c 的 1、T4 的 4）。後面接單位
+ * （6.5 mg/dL、6.5%）不受影響——那才是正常的寫法。
+ */
 function numeric(raw: string): string | null {
-  const match = String(raw).trim().match(/-?\d+(?:\.\d+)?/);
+  const match = String(raw).trim().match(/(?<![A-Za-z\d.])-?\d+(?:\.\d+)?/);
   return match ? String(Number(match[0])) : null;
 }
 
@@ -352,6 +362,23 @@ export function parseLabNarrative(
       .replace(/[０-９]/g, (ch) => String.fromCharCode(ch.charCodeAt(0) - 0xfee0));
 
   /*
+   * 模型常把兩個名字串在一起，例如「醣化血紅素=HbA1c」「HbA1c／糖化血色素」。
+   *
+   * 送進去的好讀文字是「項目=值」的格式，模型抄項目名時把醫令名也一起帶上，
+   * 於是引用寫成兩個名字夾一個等號。串起來的字串跟任一個來源名稱都對不上，
+   * 一份完全正確的引用因此被判成「核不到來源」而整份擋下——實測 HbA1c 6.5
+   * 就是這樣被擋的，而來源逐字就是「項目 HbA1c／醫令 醣化血紅素／值 6.5」。
+   *
+   * 拆開之後任一段對得上就算數。這不是放寬：數值仍然必須屬於對得上的那個
+   * 項目，「315 寫成糖化血色素」那個洞照樣擋得住。
+   */
+  const nameParts = (text: string) =>
+    text
+      .split(/[=＝/／]+/)
+      .map((part) => normalise(part))
+      .filter(Boolean);
+
+  /*
    * 項目名與醫令名都算數。
    *
    * 送給模型的好讀文字是依醫令分組呈現的，所以模型引用時常寫醫令名稱
@@ -367,10 +394,10 @@ export function parseLabNarrative(
   const unverifiedValues = cited.filter((item) => {
     const n = numeric(item.value);
     if (n === null) return false;
-    const key = normalise(item.item);
-    if (!key) return true;
+    const keys = nameParts(item.item);
+    if (!keys.length) return true;
     const owners = sourceByItem.filter((row) =>
-      row.keys.some((name) => name === key || name.includes(key) || key.includes(name)),
+      row.keys.some((name) => keys.some((key) => name === key || name.includes(key) || key.includes(name))),
     );
     // 名稱完全找不到，或找得到但那個項目沒有這個數值——兩種都不算核實
     return !owners.some((row) => row.values.has(n));

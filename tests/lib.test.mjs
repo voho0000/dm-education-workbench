@@ -4708,3 +4708,43 @@ test("模型輸出的 Markdown 標記要被去掉，不是讓整份報告被擋"
   assert.ok(check.shortTerm.includes("飲食份量諮詢"), "只去符號，不動字");
   assert.ok(check.midTerm.includes("血脂"), "只去符號，不動字");
 });
+
+test("取值時要跳過夾在字母裡的數字", () => {
+  // 模型有時把項目名塞進 value 欄位，寫成「HbA1c=6.5 %」。原本取字串裡第一個
+  // 數字，抓到的是 HbA1c 裡的那個 1，於是 6.5 永遠核不到，一份完全正確的
+  // 引用被判成「核不到來源」而整份擋下。實測就是這樣擋的。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "09006C", order_name: "醣化血紅素",
+            assay_item_name: "HbA1c", assay_value: "6.5", unit_data: "%" },
+        ],
+      },
+    },
+  });
+  const ok = parseLabNarrative(
+    JSON.stringify({
+      narrative: "紀錄中的糖化血色素為 6.5 %。",
+      short_term: "1. 回診時確認追蹤時程。",
+      mid_term: "維持追蹤。",
+      cited_values: [{ item: "醣化血紅素", value: "HbA1c=6.5 %" }],
+    }),
+    facts,
+  );
+  assert.deepEqual(ok.unverifiedValues, [], "6.5 對得上來源，不該被判核不到");
+
+  // 反向：數值屬於別的項目仍然要擋。這是先前補起來的洞，不能因為放寬名稱
+  // 比對而重新打開。
+  const wrong = parseLabNarrative(
+    JSON.stringify({
+      narrative: "糖化血色素 315 %。",
+      short_term: "1. 回診時確認追蹤時程。",
+      mid_term: "維持追蹤。",
+      cited_values: [{ item: "醣化血紅素", value: "HbA1c=315 %" }],
+    }),
+    facts,
+  );
+  assert.equal(wrong.unverifiedValues.length, 1, "來源沒有 315，必須擋下");
+});
