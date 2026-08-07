@@ -637,7 +637,12 @@ test("病人版不再逐段要求病人提問", () => {
   assert.ok(!report.includes("下次回診可以確認"), "不應再出現提問清單");
   const questions = (report.match(/？/g) ?? []).length;
   assert.ok(questions <= 3, `病人版問句過多（${questions} 個），會讀起來像在派作業`);
-  assert.ok(!report.includes("最後"), "移除提問清單後不應再補上安慰性結語");
+  // 擋的是安慰性結語，不是「最後」這兩個字——禁一個常用詞會擋掉正當的
+  // 交叉引用（例如「請依文末的就醫警訊處理」）。
+  assert.ok(
+    !/最後[，,、]?\s*(請記得|祝|希望|別忘了|要相信)/.test(report),
+    "移除提問清單後不應再補上安慰性結語",
+  );
 });
 
 test("所有模組文字都不含提問清單", async () => {
@@ -4618,4 +4623,15 @@ test("餵給病人版敘述器的檢驗只有糖尿病照護相關的", () => {
   assert.ok(!/- K=/.test(input), "血鉀不該餵給病人版");
   assert.ok(!/- SGPT=/.test(input), "肝功能不該餵給病人版");
   assert.match(input, /另有 \d+ 組檢驗與糖尿病照護無關/, "要說明濾掉了幾組，並要求不要提及");
+});
+
+test("腦血管模組不得讓已消失的症狀讀起來像可以等下次回診", () => {
+  // 文末警訊寫著「不要等症狀自行消失…立即撥打 119」，正文卻只說「即使症狀
+  // 已消失也要儘速告訴醫師」。兩句講的是不同時間點，但「儘速告訴醫師」模糊
+  // 到讓人可以讀成「好了就下次再說」——同一份報告的兩半互相削弱。
+  const stroke = EDUCATION_MODULES.find((item) => item.id === "STROKE-CORE");
+  assert.ok(stroke, "腦血管模組要存在");
+  assert.ok(/不要等到下次回診/.test(stroke.patientText), "已消失的症狀不得讀起來像可以等");
+  assert.ok(/119/.test(stroke.patientText), "再次發生要導向文末的 119 警訊");
+  assert.ok(/不要等症狀自行消失/.test(stroke.urgentSigns), "文末警訊本身不變");
 });
