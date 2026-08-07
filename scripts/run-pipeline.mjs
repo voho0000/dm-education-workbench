@@ -166,6 +166,14 @@ for (const name of names) {
     .map((item) => item.metric);
 
   const rawOutputs = {};
+  /*
+   * 呼叫失敗的原因要留在評估包裡（11_呼叫失敗.txt），不能只印到 stdout。
+   *
+   * 踩過三次：批次輸出被 tail 截掉之後，一個沒有 09 檔的資料夾只說得出
+   * 「③ 失敗」，說不出為什麼——得重跑一次才知道是逾時還是網路錯。評估包
+   * 要能自己解釋自己，否則它只在當下那個終端機視窗裡有意義。
+   */
+  const callErrors = [];
   if (args.live) {
     process.stdout.write(`${id} 送出呼叫…`);
     for (const [key, prompt, input, label] of [
