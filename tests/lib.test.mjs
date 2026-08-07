@@ -4686,3 +4686,25 @@ test("來源自帶的參考範圍不算「沒被驗證過的數字」", () => {
   );
   assert.ok(invented.uncitedNumbers.includes("87.4"), "自己算出來的數字必須被抓到");
 });
+
+test("模型輸出的 Markdown 標記要被去掉，不是讓整份報告被擋", () => {
+  // 病人版是純文字。實測兩份報告因為標記符號整份被判成不可使用：一次是
+  // 行首的「-」，一次是行內的「**粗體**」。內容本身都沒有錯。
+  // 格式可以確定性修正，不必賭模型記得——這個專案已經四次看到 prompt 被繞過。
+  const facts = extractPatientFacts({ userInput: { REPORT_DATE: "2026-08-03" }, rawSources: {} });
+  const check = parseLabNarrative(
+    JSON.stringify({
+      narrative: "## 血糖控制\n- 紀錄中曾出現偏高的血糖。",
+      short_term: "1. **飲食份量諮詢**：請於回診時請營養師評估。",
+      mid_term: "__血脂__：請與醫療團隊確認目標。",
+      cited_values: [],
+    }),
+    facts,
+  );
+  for (const [name, text] of [["觀察摘要", check.narrative], ["短期建議", check.shortTerm], ["中期目標", check.midTerm]]) {
+    assert.ok(!/\*\*|__|^#{1,6}\s|^\s*[-*+]\s/m.test(text), `${name}不該留下標記符號：${text}`);
+  }
+  // 文字本身一個都不能少
+  assert.ok(check.shortTerm.includes("飲食份量諮詢"), "只去符號，不動字");
+  assert.ok(check.midTerm.includes("血脂"), "只去符號，不動字");
+});

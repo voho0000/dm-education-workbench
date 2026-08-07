@@ -219,16 +219,26 @@ function numeric(raw: string): string | null {
 }
 
 /*
- * 模型有時會把清單寫成「- 項目：…」。病人版禁止任何一行以 - * + • ‧ 開頭
- * （純文字輸出混進標記語法），而那是純呈現問題，內容本身沒有錯——實測一份
- * 報告因此整份被判成不可使用。
+ * 模型有時會把清單寫成「- 項目：…」或把小標寫成「**項目**：…」。病人版是
+ * 純文字，禁止行首符號與 Markdown 標記，而那是純呈現問題，內容本身沒有錯
+ * ——實測兩份報告因此整份被判成不可使用（一次是行首的「-」，一次是行內的
+ * 「**粗體**」）。
  *
- * 只去掉行首的符號，不動任何一個字。去掉之後那一行本身就是完整句子。
+ * 為什麼在這裡處理而不是再加一條 prompt 禁令：這個專案已經看過四次模型
+ * 守住字面卻從別處繞過去。格式是可以確定性修正的東西，不必賭模型記得。
+ *
+ * 只去掉標記符號，不動任何一個字。
  */
-function stripBullets(text: string): string {
+function stripMarkup(text: string): string {
   return text
     .split("\n")
-    .map((line) => line.replace(/^\s*[-*+•‧]\s+/, ""))
+    .map((line) =>
+      line
+        .replace(/^\s*[-*+•‧]\s+/, "")
+        .replace(/^\s*#{1,6}\s+/, "")
+        .replace(/\*\*(.+?)\*\*/g, "$1")
+        .replace(/__(.+?)__/g, "$1"),
+    )
     .join("\n");
 }
 
@@ -312,9 +322,9 @@ export function parseLabNarrative(
     parsed = JSON.parse(candidate.slice(first, last + 1));
   }
   const record = (parsed ?? {}) as Record<string, unknown>;
-  const narrative = stripBullets(String(record.narrative ?? "").trim());
-  const shortTerm = stripBullets(String(record.short_term ?? "").trim());
-  const midTerm = stripBullets(String(record.mid_term ?? "").trim());
+  const narrative = stripMarkup(String(record.narrative ?? "").trim());
+  const shortTerm = stripMarkup(String(record.short_term ?? "").trim());
+  const midTerm = stripMarkup(String(record.mid_term ?? "").trim());
   // 核實與禁止事項掃描對三段一視同仁。只驗觀察摘要的話，另外兩段等於沒人看，
   // 而短期建議正是最容易滑出「叫病人自行停藥」的一段。
   const allText = [narrative, shortTerm, midTerm].filter(Boolean).join("\n\n");
