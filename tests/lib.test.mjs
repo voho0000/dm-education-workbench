@@ -4642,3 +4642,41 @@ test("敘述器不得用整數門檻概括實際數值", () => {
   assert.ok(/不要用整數門檻概括/.test(LAB_NARRATIVE_PROMPT), "要明講不能取整數門檻");
   assert.ok(/459/.test(LAB_NARRATIVE_PROMPT), "要給實際踩過的反例");
 });
+
+test("來源自帶的參考範圍不算「沒被驗證過的數字」", () => {
+  // 兩份報告因為寫了「參考範圍 0.6 至 1.3 mg/dL」被印上「這一段未通過自動
+  // 檢查，不可直接提供給病人」，而那些數字逐字在來源的 consult_value 裡。
+  // 一份沒問題的段落帶著這種警語比沒有更糟——看的人下次就不會認真看警語了。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03" },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202512", order_code: "09015C", order_name: "肌酸酐",
+            assay_item_name: "Creatinine", assay_value: "0.9", unit_data: "mg/dL",
+            consult_value: "[0.6][1.3]" },
+        ],
+      },
+    },
+  });
+  const raw = JSON.stringify({
+    narrative: "紀錄中的血清肌酸酐為 0.9 mg/dL，參考範圍 0.6 至 1.3 mg/dL。",
+    short_term: "1. 回診時確認腎功能追蹤時程。",
+    mid_term: "維持腎功能追蹤。",
+    cited_values: [{ item: "Creatinine", value: "0.9" }],
+  });
+  const check = parseLabNarrative(raw, facts);
+  assert.deepEqual(check.uncitedNumbers, [], "參考範圍的數字不該被當成未驗證");
+
+  // 但模型自己算出來的數字還是要抓到。
+  const invented = parseLabNarrative(
+    JSON.stringify({
+      narrative: "紀錄中的血清肌酸酐為 0.9 mg/dL，換算後腎功能約為 87.4。",
+      short_term: "1. 回診時確認腎功能追蹤時程。",
+      mid_term: "維持腎功能追蹤。",
+      cited_values: [{ item: "Creatinine", value: "0.9" }],
+    }),
+    facts,
+  );
+  assert.ok(invented.uncitedNumbers.includes("87.4"), "自己算出來的數字必須被抓到");
+});

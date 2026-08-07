@@ -366,6 +366,27 @@ export function parseLabNarrative(
     return !owners.some((row) => row.values.has(n));
   });
 
+  /*
+   * 來源自帶的參考範圍也算數。
+   *
+   * 這個檢查要抓的是「模型自己算出來的數字」。參考範圍是抄的不是算的——
+   * 實測有兩份報告因為寫了「參考範圍 70 至 110 mg/dL」「0.6 至 1.3 mg/dL」
+   * 被印上「這一段未通過自動檢查，不可直接提供給病人」，而那些數字明明
+   * 逐字在來源的 consult_value 裡。一份沒問題的段落帶著這種警語，比沒有
+   * 警語更糟：看的人下次就不會認真看警語了。
+   *
+   * **只放行參考範圍，不放行所有來源數值。** 全放行會重新打開先前補起來的
+   * 洞：模型把血糖 315 寫成「糖化血色素 315 %」時，315 確實在來源裡，
+   * 只是屬於另一個項目。參考範圍是上下限、不是病人的測量值，拿它來張冠
+   * 李戴的風險小得多。
+   */
+  const referenceNumbers = new Set(
+    facts.labItems
+      .flatMap((item) => [...(item.referenceRange ?? "").matchAll(/\d+(?:\.\d+)?/g)].map((m) => m[0]))
+      .map(numeric)
+      .filter((n): n is string => n !== null),
+  );
+
   // 文中每一個數字都要能對應到 cited_values 或允許清單，否則就是沒被驗證過的數字
   const citedNumbers = new Set(cited.map((item) => numeric(item.value)).filter((n): n is string => n !== null));
   const uncitedNumbers = [
@@ -374,7 +395,13 @@ export function parseLabNarrative(
         .map((match) => match[0])
         .filter((raw) => {
           const n = numeric(raw);
-          return n !== null && !citedNumbers.has(n) && !ALLOWED_NUMBERS.has(n) && !GUIDELINE_NUMBERS.has(n);
+          return (
+            n !== null &&
+            !citedNumbers.has(n) &&
+            !referenceNumbers.has(n) &&
+            !ALLOWED_NUMBERS.has(n) &&
+            !GUIDELINE_NUMBERS.has(n)
+          );
         }),
     ),
   ];
