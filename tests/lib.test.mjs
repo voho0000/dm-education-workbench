@@ -4501,3 +4501,36 @@ test("異常值要帶著醫師接得住的脈絡：出處、是哪一筆、以�
   assert.ok(hit.patientMessage.includes("費用年月 202401"), `要指得出是哪一筆：${hit.patientMessage}`);
   assert.ok(!hit.patientMessage.includes("202512"), "不該把不相干的月份也列進來");
 });
+
+test("判讀器的欄位說明不得跟它自己的限制打架", () => {
+  // 限制區寫「不得敘述趨勢」，欄位說明卻要求「描述整體型態」——實測五份
+  // 全部出現「病程進展」「嚴重高血糖波動」「血鉀不穩定…之間波動」。
+  // 這是同一份 prompt 自己打自己，模型照著比較具體的那一邊寫。
+  assert.ok(!/描述整體型態/.test(LAB_REVIEW_PROMPT), "欄位說明不得再要求描述整體型態");
+  for (const banned of ["病程", "進展", "惡化", "波動"]) {
+    assert.ok(
+      new RegExp(`不要寫成[^"]*${banned}`).test(LAB_REVIEW_PROMPT),
+      `pattern 欄位要明講不要寫成${banned}`,
+    );
+  }
+  assert.ok(/不要寫這代表什麼病/.test(LAB_REVIEW_PROMPT), "why 欄位要擋住用機轉回答");
+});
+
+test("講目標不算宣稱數值狀態", () => {
+  // 實測踩到過：一句飲食建議「確保營養均衡並維持血糖平穩」讓整份報告硬性
+  // 歸零。那句話講的是要達成什麼，不是宣稱數值現在怎樣。誤報造成歸零比漏抓
+  // 更糟——它會讓人開始不信這個分數，而分數的用途正是指出哪幾份要看。
+  const goals = [
+    "請由營養師訂出適合的份量與餐次規劃，確保營養均衡並維持血糖平穩。",
+    "規律運動有助於血糖穩定。",
+    "目標是讓血糖平穩下來。",
+  ];
+  for (const text of goals) {
+    assert.deepEqual(findUnsupportedClaims(text, "patient"), [], `目標句不該被標：${text}`);
+  }
+
+  // 但真的在描述數值就要擋下來。
+  for (const text of ["您的血糖波動較大。", "腎功能顯著惡化。", "電解質數值大致平穩。"]) {
+    assert.ok(findUnsupportedClaims(text, "patient").length > 0, `這句該被標：${text}`);
+  }
+});

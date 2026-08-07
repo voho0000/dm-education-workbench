@@ -21,7 +21,21 @@ export type UnsupportedClaim = {
   sentence: string;
 };
 
-type Pattern = { label: string; pattern: RegExp };
+type Pattern = {
+  label: string;
+  pattern: RegExp;
+  /**
+   * 先從句子裡拿掉的部分，拿掉後再比對。
+   *
+   * 用來擋掉「講目標」被誤判成「講數值」。實測踩到過：一句飲食建議
+   * 「確保營養均衡並維持血糖平穩」讓整份報告硬性歸零——那句話講的是要
+   * 達成什麼，不是宣稱數值現在怎樣。
+   *
+   * 誤報造成歸零比漏抓更糟：一份被錯誤擋下的報告會讓人開始不信這個分數，
+   * 而這個分數的用途正是告訴人哪幾份要看。
+   */
+  exempt?: RegExp;
+};
 
 const PATTERNS: ReadonlyArray<Pattern> = [
   {
@@ -38,6 +52,8 @@ const PATTERNS: ReadonlyArray<Pattern> = [
      * 可以說範圍（「介於 65 至 500」），不能說波動。
      */
     label: "以變化或穩定度描述數值（資料沒有採檢日期，判定不了先後）",
+    // 「維持血糖平穩」是目標，「血糖平穩」是宣稱。差別在前面那個動詞。
+    exempt: /(維持|保持|讓|使|幫助|達到|趨於|以求|目標是|有助於)[^。\n]{0,10}(平穩|穩定)/g,
     pattern:
       /(血糖|血壓|數值|指標|指數|檢驗|結果|控制|腎功能|肝功能|電解質|糖化血色素|醣化血紅素|HbA1c)[^。\n]{0,12}(波動|起伏|忽高忽低|時高時低|不穩|變異較?大|(急速|快速|明顯|顯著)(變化|上升|下降|惡化|衰退)|(相對|尚算|大致|整體)?(平穩|穩定))|(波動|起伏)[^。\n]{0,8}(較大|很大|明顯|劇烈)/,
   },
@@ -107,8 +123,10 @@ export function findUnsupportedClaims(text: string, audience: "patient" | "clini
   for (const sentence of text.split(/[。\n]/)) {
     const trimmed = sentence.trim();
     if (!trimmed) continue;
-    for (const { label, pattern } of patterns) {
-      if (!pattern.test(trimmed)) continue;
+    for (const { label, pattern, exempt } of patterns) {
+      // 先把「講目標」的部分拿掉，剩下的才是對數值的陳述。
+      const testable = exempt ? trimmed.replace(exempt, "") : trimmed;
+      if (!pattern.test(testable)) continue;
       const key = `${label}｜${trimmed}`;
       if (seen.has(key)) continue;
       seen.add(key);
