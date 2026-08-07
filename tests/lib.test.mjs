@@ -4632,8 +4632,14 @@ test("腦血管模組不得讓已消失的症狀讀起來像可以等下次回�
   const stroke = EDUCATION_MODULES.find((item) => item.id === "STROKE-CORE");
   assert.ok(stroke, "腦血管模組要存在");
   assert.ok(/不要等到下次回診/.test(stroke.patientText), "已消失的症狀不得讀起來像可以等");
-  assert.ok(/119/.test(stroke.patientText), "再次發生要導向文末的 119 警訊");
+  assert.ok(/不要等它再發生一次/.test(stroke.patientText), "不得分成第一次與再次兩種處置");
   assert.ok(/不要等症狀自行消失/.test(stroke.urgentSigns), "文末警訊本身不變");
+
+  // 同一個症狀不得在一份報告裡有兩種急迫性。神經模組講的是逐漸變化與足部
+  // 傷口；突發的單側無力、步態不穩屬於腦血管段的 119 規則。
+  const nerve = EDUCATION_MODULES.find((item) => item.id === "NERVE-CORE");
+  assert.ok(!/走路突然不穩[^。]*儘速就醫/.test(nerve.urgentSigns), "突發神經症狀不得降級為儘速就醫");
+  assert.ok(/119/.test(nerve.urgentSigns), "突發的那一類要導向 119");
 });
 
 test("敘述器不得用整數門檻概括實際數值", () => {
