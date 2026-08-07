@@ -4473,3 +4473,31 @@ test("HbA1c 失真不宣稱方向", () => {
     assert.ok(!/低估|比實際血糖低|看起來比實際情況好/.test(text), `不得宣稱失真方向：${text}`);
   }
 });
+
+test("異常值要帶著醫師接得住的脈絡：出處、是哪一筆、以及一份能遞出去的文件", () => {
+  // 資料負責人（醫師）指出：病人在診間突然講一個血鉀 2.4，醫師不知道這是
+  // 哪來的、什麼時候的，也無從查起——那筆可能是好幾年前的申報紀錄。
+  // 只寫「回診時主動提出」等於把一個接不住的提問丟給醫師。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", R1: 2 },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "202401", order_code: "09021C", order_name: "鉀",
+            assay_item_name: "K", assay_value: "2.4", unit_data: "mmol/L" },
+          { fee_ym: "202512", order_code: "09021C", order_name: "鉀",
+            assay_item_name: "K", assay_value: "3.1", unit_data: "mmol/L" },
+        ],
+      },
+    },
+  });
+  const hit = evaluateThresholds(extractLabFindings(facts), facts).find(
+    (item) => item.code === "potassium-abnormal",
+  );
+  assert.ok(hit.patientMessage.includes("健保申報紀錄"), "要說出處");
+  assert.ok(hit.patientMessage.includes("把這份報告帶去給醫師看"), "要遞得出文件，不是靠病人轉述");
+
+  // 指名的是最低值那一筆的月份，不是全部紀錄的範圍——2.4 來自 202401。
+  assert.ok(hit.patientMessage.includes("費用年月 202401"), `要指得出是哪一筆：${hit.patientMessage}`);
+  assert.ok(!hit.patientMessage.includes("202512"), "不該把不相干的月份也列進來");
+});

@@ -64,6 +64,15 @@ export type LabItemFact = {
   orderNames: string[];
   /** 來源出現過的所有原始值，逐字保留、不排序成趨勢 */
   rawValues: string[];
+  /**
+   * 與 rawValues 同索引的費用年月。
+   *
+   * feeMonths 是去重排序後的集合，配對在那裡就被拆開了——報告因此只能說
+   * 「費用年月 202401－202512」，指不出最低的那筆是哪一個月。資料負責人
+   * （醫師）指出這在診間接不住：病人講一個血鉀 2.4，醫師不知道是哪來的、
+   * 什麼時候的，也無從查起。
+   */
+  valueMonths: string[];
   unit: string | null;
   referenceRange: string | null;
   /** 來源提供的費用年月集合 */
@@ -413,6 +422,7 @@ function extractLabs(labs: unknown[]) {
       units: new Set<string>(),
       refs: new Set<string>(),
       months: new Set<string>(),
+      valueMonths: [] as string[],
       codes: new Set<string>(),
       names: new Set<string>(),
     };
@@ -421,6 +431,7 @@ function extractLabs(labs: unknown[]) {
     const orderName = String(record.order_name ?? "").trim();
     if (orderName && orderName !== itemName) entry.names.add(orderName);
     entry.values.push(value);
+    entry.valueMonths.push(String(record.fee_ym ?? "").trim());
     const unit = String(record.unit_data ?? "").trim();
     if (unit && unit !== "null") entry.units.add(unit);
     const ref = String(record.consult_value ?? "").trim();
@@ -436,6 +447,7 @@ function extractLabs(labs: unknown[]) {
       orderCodes: [...entry.codes].sort(),
       orderNames: [...entry.names].sort(),
       rawValues: entry.values,
+      valueMonths: entry.valueMonths,
       unit: entry.units.size === 1 ? [...entry.units][0] : entry.units.size > 1 ? [...entry.units].join(" / ") : null,
       referenceRange: entry.refs.size ? [...entry.refs][0] : null,
       feeMonths: [...entry.months].sort(),

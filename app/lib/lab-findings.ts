@@ -210,6 +210,8 @@ export type ParsedValue = {
   value: number;
   /** ≧300 這種帶不等號的值，判定門檻時要考慮方向 */
   qualifier: "=" | ">" | ">=" | "<" | "<=";
+  /** 這一筆自己的費用年月。指得出「最低的那筆是哪個月」，醫師才查得到。 */
+  feeMonth?: string | null;
 };
 
 /** 解析 `≧300 (2+)`、`＞150`、`＜1.5`、`40.4` 這類值。 */
@@ -252,6 +254,28 @@ function matches(item: LabItemFact): Analyte | null {
     return matcher.analyte;
   }
   return null;
+}
+
+/**
+ * 病人要把這件事帶回診間時，附上醫師接得住所需的脈絡。
+ *
+ * 原本四則異常值都只寫「請在回診時主動提出」。資料負責人（本身是醫師）指出
+ * 這在診間會很奇怪：病人突然講一個血鉀 2.4，醫師不知道這是哪來的、什麼時候
+ * 的、也查不到——那筆資料可能是好幾年前的申報紀錄。一個接不住的提問，對醫師
+ * 是額外的負擔，對病人是白跑一趟。
+ *
+ * 所以要給三件事：出處（健保申報紀錄，不是新做的檢查）、時間錨點（費用年月，
+ * 我們唯一有的時間資訊），以及一份可以遞出去的文件。講「帶這份報告給醫師看」
+ * 比講「主動提出」有用——醫師拿到紙本就能自己看到脈絡，不必靠病人轉述。
+ */
+function handoffNote(finding: AnalyteFinding, value: number): string {
+  const hit = finding.values.find((item) => item.value === value);
+  const when = hit?.feeMonth
+    ? `費用年月 ${hit.feeMonth}`
+    : finding.feeMonths.length
+      ? `費用年月 ${finding.feeMonths[0]}－${finding.feeMonths[finding.feeMonths.length - 1]} 之間`
+      : "來源未提供年月";
+  return `這筆數值來自健保申報紀錄（${when}），不是最近做的檢查，也沒有採檢日期。回診時請把這份報告帶去給醫師看，讓他知道數字的來源與時間，需要的話再安排複驗。`;
 }
 
 /**
@@ -312,7 +336,12 @@ export function extractLabFindings(facts: PatientFacts): AnalyteFinding[] {
   for (const item of facts.labItems) {
     const analyte = matches(item);
     if (!analyte) continue;
-    const parsed = item.rawValues.map(parseLabValue).filter((v): v is ParsedValue => v !== null);
+    const parsed = item.rawValues
+      .map((raw, index) => {
+        const value = parseLabValue(raw);
+        return value ? { ...value, feeMonth: item.valueMonths[index] || null } : null;
+      })
+      .filter((v): v is ParsedValue => v !== null);
     if (!parsed.length) continue;
 
     const existing = byAnalyte.get(analyte);
@@ -576,7 +605,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       ruleId: null,
       severity: potassium.min < 3.0 || potassium.max > 6.0 ? "urgent" : "attention",
       clinicianMessage: `K 曾出現${low ? "偏低" : "偏高"}數值（${detail}${rangeInline(potassium)} mmol/L）。${NOT_IN_GUIDELINE}`,
-      patientMessage: `您的資料中曾出現${low ? "偏低" : "偏高"}的血鉀數值（${detail} mmol/L）。血鉀太${low ? "低" : "高"}可能影響心跳與肌肉力量${low ? "，利尿劑與腹瀉嘔吐都可能造成" : "，腎功能下降時較容易發生"}。這些紀錄沒有檢查日期，請在回診時主動提出。`,
+      patientMessage: `您的資料中曾出現${low ? "偏低" : "偏高"}的血鉀數值（${detail} mmol/L）。血鉀太${low ? "低" : "高"}可能影響心跳與肌肉力量${low ? "，利尿劑與腹瀉嘔吐都可能造成" : "，腎功能下降時較容易發生"}。${handoffNote(potassium, low ? potassium.min : potassium.max)}`,
       citation: null,
     });
   }
@@ -591,7 +620,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       severity: "urgent",
       clinicianMessage: `Na 曾出現異常值（${detail}${rangeInline(sodium)} mmol/L）。${NOT_IN_GUIDELINE}`,
       patientMessage:
-        "您的資料中曾出現異常的血鈉數值。這些紀錄沒有檢查日期，請在回診時主動提出，由醫療團隊確認目前狀況。",
+        `您的資料中曾出現異常的血鈉數值。${handoffNote(sodium, sodium.min < 130 ? sodium.min : sodium.max)}`,
       citation: null,
     });
   }
@@ -613,7 +642,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       severity: hb.min < 8 ? "urgent" : "attention",
       // 糖化血色素失真由下面那一則專門處理，這裡不重複。
       clinicianMessage: `Hb 曾出現 ${hb.min} g/dL${range(hb)}${kidneyImpaired ? "，合併腎功能不全，需考慮腎性貧血" : ""}。${NOT_IN_GUIDELINE}`,
-      patientMessage: `您的資料中曾出現偏低的血色素（${hb.min} g/dL），也就是貧血。${kidneyImpaired ? "腎功能下降的人比較容易發生貧血。" : ""}貧血可能讓您容易疲倦、喘或頭暈，也可能讓糖化血色素這個指標不準。請在回診時主動提出。`,
+      patientMessage: `您的資料中曾出現偏低的血色素（${hb.min} g/dL），也就是貧血。${kidneyImpaired ? "腎功能下降的人比較容易發生貧血。" : ""}貧血可能讓您容易疲倦、喘或頭暈，也可能讓糖化血色素這個指標不準。${handoffNote(hb, hb.min)}`,
       citation: null,
     });
   }
@@ -707,8 +736,7 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
        * 定義（需要他人協助），不能只憑數值判定。
        */
       clinicianMessage: `${LOWEST_LABEL[lowestItem.analyte] ?? "血糖"}曾出現 ${lowest} mg/dL，屬低血糖範圍${lowest < 54 ? "（低於 54，為指引表一的第二級低血糖）" : "（低於 70，為第一級）"}。`,
-      patientMessage:
-        "您的資料中曾出現偏低的血糖數值。低血糖可能造成發抖、冒冷汗、頭暈或意識改變，請在回診時主動提出，讓醫療團隊了解發生的情況。",
+      patientMessage: `您的資料中曾出現偏低的血糖數值。低血糖可能造成發抖、冒冷汗、頭暈或意識改變。${handoffNote(lowestItem, lowest)}`,
       citation: null,
     });
   }
