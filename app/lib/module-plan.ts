@@ -329,6 +329,17 @@ export function parseDataAudit(raw: string): DataAudit {
   };
 }
 
+/**
+ * 補充模組附在對應 CORE 底下，不自成一個主題。
+ *
+ * 少了這一條，EYE-PREGNANCY 會被當成獨立主題，然後把 EYE-T2 的補充文字再拉
+ * 一次——同一句話在報告裡出現兩遍。既有的重複句測試就是這樣抓到的。
+ *
+ * 挑選（resolvePlan）與排版（assemblePatientReport）在兩個函式裡各用一次，
+ * 所以放在模組層級：只改到一邊，補充模組就會同時是主題又是補充。
+ */
+const IS_SUPPLEMENT = /-(T[12]|PREGNANCY)$/;
+
 export type ResolvedPlan = {
   decisions: TopicDecision[];
   /** 完整展開的併發症主題模組，已排序 */
@@ -403,12 +414,30 @@ export function resolvePlan(audit: DataAudit | null, facts: PatientFacts): Resol
   };
 
   // PR=1 與 PR=2 都展開完整模組；兩者的差別只留在醫師版與判定路徑的分級標示上。
+  /*
+   * 性別／年齡條件的補充模組，掛在對應的 CORE 之後。
+   *
+   * 判定放在這裡而不是輸出時再濾，是為了讓醫師版的「納入了哪些模組」與病人版
+   * 實際看到的內容是同一份清單——兩邊各判一次就會有一天不一致。
+   */
+  const SEX_VARIANTS: Record<string, string[]> = { "EYE-CORE": ["EYE-PREGNANCY"] };
+  const sexAllows = (id: string) => {
+    const gate = MODULE_BY_ID.get(id)?.sexGate;
+    if (!gate) return true;
+    // 性別未知時仍納入：漏掉對育齡女性是安全損失，多給一段只是雜訊。
+    if (facts.sex.known && facts.sex.value !== gate.sex) return false;
+    return !(facts.ageYears.known && facts.ageYears.value > gate.maxAge);
+  };
+
   const topicModuleIds: string[] = [];
   for (const item of [...established, ...active, ...moderate]) {
     topicModuleIds.push(item.moduleId);
     const prefix = TYPE_VARIANTS[item.moduleId];
     if (typeSuffix && prefix && MODULE_BY_ID.has(`${prefix}-${typeSuffix}`)) {
       topicModuleIds.push(`${prefix}-${typeSuffix}`);
+    }
+    for (const extra of SEX_VARIANTS[item.moduleId] ?? []) {
+      if (sexAllows(extra)) topicModuleIds.push(extra);
     }
   }
 
@@ -551,6 +580,7 @@ export function resolvePlan(audit: DataAudit | null, facts: PatientFacts): Resol
       kidneyIntensive: labThresholds.some((hit) => hit.code === "kidney-intensive-followup"),
           type1: facts.diabetesType.verdict === "type1-confirmed",
           ckdMonitoringRuleId: ckdMonitoringRuleId(facts),
+          male: facts.sex.known && facts.sex.value === "男性",
     }),
     urgentSigns,
   };
@@ -727,7 +757,7 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
   // 順序：已發生排前面，其次積極照護，再來適度介入。三種都會展開完整模組。
   for (const kind of ["established", "prevention-active", "prevention-moderate"] as const) {
     for (const id of topicIds) {
-      if (/-T[12]$/.test(id)) continue;
+      if (IS_SUPPLEMENT.test(id)) continue;
       const decision = byId.get(id);
       const parent = decision ? null : topicIds.find((other) => byId.get(other) && id.startsWith(other.split("-")[0]));
       const actual = decision?.kind ?? (parent ? byId.get(parent)?.kind : undefined);
@@ -828,7 +858,7 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
     );
     for (const id of orderedIds) {
       const extras = topicIds
-        .filter((other) => /-T[12]$/.test(other) && other.split("-")[0] === id.split("-")[0])
+        .filter((other) => IS_SUPPLEMENT.test(other) && other.split("-")[0] === id.split("-")[0])
         .map((other) => MODULE_BY_ID.get(other)?.patientText)
         .filter((text): text is string => Boolean(text));
       emit(id, "", extras);
@@ -859,6 +889,23 @@ export function assemblePatientReport(plan: ResolvedPlan, options: AssembleOptio
       let changed = false;
       for (const variant of moduleDef.definiteVariants ?? []) {
         if (!active[variant.when]) continue;
+        /*
+         * from 對不到就要炸。
+         *
+         * 原本無論有沒有換成功都設 changed = true，所以一個對不到的 from 會
+         * 安靜地什麼都不做——報告照樣產出，只是留著我們已經判定「對這位病人
+         * 不適用」的那句話。兩個 variant 指向同一行時尤其容易發生：第一個換掉
+         * 之後，第二個的 from 就再也對不到了。
+         *
+         * 這種情況下丟出來比出報告好。留著的是我們明知不適用的衛教內容，
+         * 而下面的測試會在進產品前就把它擋掉。
+         */
+        if (!text.includes(variant.from)) {
+          throw new Error(
+            `模組 ${moduleDef.id} 的 ${variant.when} 變體對不到原文，替換沒有發生。` +
+              `原文可能被改過，或被另一個變體先換走了。要換的是：「${variant.from.slice(0, 30)}…」`,
+          );
+        }
         text = text.replace(variant.from, variant.to);
         changed = true;
       }

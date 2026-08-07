@@ -176,7 +176,24 @@ for (const name of names) {
       try {
         rawOutputs[key] = (await callLive(prompt, input, label, model)).text;
       } catch (error) {
-        console.error(`\n  ${label} 失敗：${String(error?.message ?? error)}`);
+        const message = String(error?.message ?? error);
+        console.error(`\n  ${label} 失敗：${message}`);
+        /*
+         * 配額耗盡就整批停下來。
+         *
+         * 不停的話會安靜地產出一整批「呼叫全部失敗」的報告——它們有完整的
+         * 檔案結構、有可發布度分數、看起來像跑完了，實際上一次模型都沒呼叫到。
+         * 實測就發生過：五份都拿到 0 分，我以為是新 prompt 沒效果，查下去
+         * 才發現金鑰早就 429 了。
+         *
+         * 失敗一次可以重試（callLive 已經退避重試六次），六次都失敗代表
+         * 配額真的沒了，繼續跑只是把錯誤複製四份。
+         */
+        if (/429|配額|速率/.test(message)) {
+          console.error("\n配額或速率上限已耗盡，整批停止。已完成的部分留在輸出目錄。");
+          console.error("換一把金鑰或等配額恢復後再跑；不要拿這一批的結果當成模型的表現。");
+          process.exit(2);
+        }
       }
       await sleep(4000);
     }

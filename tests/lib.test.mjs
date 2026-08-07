@@ -1,4 +1,5 @@
 import assert from "node:assert/strict";
+import { followUpSchedule } from "../app/lib/shared-care.ts";
 import { readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -4337,4 +4338,58 @@ test("同一個檢驗的中文寫法要合併，但 eAG 不算糖化血色素", 
   ).find((item) => item.analyte === "HbA1c");
   assert.equal(merged.min, 6.1);
   assert.equal(merged.max, 6.5, "兩種寫法的值都要進判定");
+});
+
+test("懷孕相關的眼科衛教只給可能適用的人", () => {
+  // 獨立審查抓到懷孕建議被寫給一位男性病人。內容沒錯，是放錯人——而讀報告的
+  // 人分不出「這句不適用我」和「這份報告不夠準」，兩者都會傷害其餘內容的可信度。
+  const withEye = (extra) =>
+    resolvePlan(
+      null,
+      extractPatientFacts({
+        userInput: { REPORT_DATE: "2026-08-03", R1: 2, ...extra.userInput },
+        userInfo: extra.userInfo ?? {},
+        rawSources: {},
+      }),
+    ).topicModuleIds;
+
+  const male = withEye({ userInfo: { gender: "M" }, userInput: { BIRTHDAY: "1970-01-01" } });
+  assert.ok(male.includes("EYE-CORE"), "眼睛模組本身仍要納入");
+  assert.ok(!male.includes("EYE-PREGNANCY"), "男性不應拿到懷孕相關內容");
+
+  const female = withEye({ userInfo: { gender: "F" }, userInput: { BIRTHDAY: "1995-01-01" } });
+  assert.ok(female.includes("EYE-PREGNANCY"), "育齡女性應該拿到");
+
+  // 性別未知時納入：漏掉對育齡女性是安全上的損失，多給一段只是雜訊。
+  assert.ok(withEye({ userInfo: {} }).includes("EYE-PREGNANCY"), "性別未知時應保留");
+
+  const elderly = withEye({ userInfo: { gender: "F" }, userInput: { BIRTHDAY: "1940-01-01" } });
+  assert.ok(!elderly.includes("EYE-PREGNANCY"), "已知高齡女性不需要這段");
+});
+
+test("水分建議在任何變體組合下都不是無條件的", () => {
+  // 這位病人同時吃 metformin 與 SGLT2 抑制劑，兩個變體都會觸發，而它們
+  // 曾經指向同一行——第二個會靜默失效。同時他有腎臟與心血管問題，
+  // 無條件的「注意補充水分」對限水的人是錯的建議。
+  const sickDay = SELF_CARE_MODULES.find((item) => item.id === "SC-SICKDAY");
+  let text = sickDay.patientText;
+  for (const variant of sickDay.definiteVariants ?? []) {
+    assert.ok(text.includes(variant.from), `${variant.when} 變體的原句已對不到，替換會失效`);
+    text = text.replace(variant.from, variant.to);
+  }
+  assert.ok(text.includes("若醫療團隊曾交代您要限制水分"), "水分建議必須帶著限水例外");
+  assert.ok(!/注意補充水分[。並]/.test(text), "不得留下無條件的補水指示");
+});
+
+test("男性病人的追蹤時程不出現懷孕子句", () => {
+  // 眼底追蹤間隔寫著「懷孕時需更頻繁追蹤」。對男性病人那是雜訊，而雜訊會
+  // 讓人懷疑其餘內容是不是也沒有依他的狀況挑過。
+  const male = followUpSchedule([1], { male: true });
+  assert.ok(male.text.includes("眼底"), "眼底追蹤本身仍要在");
+  assert.ok(!male.text.includes("懷孕"), "男性不應看到懷孕子句");
+  assert.ok(!male.text.includes("；。"), "拿掉子句後不得留下空句");
+
+  // 規則表本身是指引原文的引用，不能被改動——內容庫要照原樣攤給人看。
+  assert.ok(followUpSchedule([1], {}).text.includes("懷孕時需更頻繁追蹤"));
+  assert.ok(male.rules.some((rule) => /懷孕時需更頻繁追蹤/.test(rule.patientStatement ?? rule.statement)));
 });

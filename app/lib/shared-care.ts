@@ -91,7 +91,13 @@ const BASE_INTERVAL_RULES = [
  */
 export function followUpSchedule(
   topics: number[],
-  options: { kidneyIntensive?: boolean; type1?: boolean; ckdMonitoringRuleId?: string | null } = {},
+  options: {
+    kidneyIntensive?: boolean;
+    type1?: boolean;
+    ckdMonitoringRuleId?: string | null;
+    /** 已知為男性。用來拿掉眼底追蹤裡的懷孕子句。 */
+    male?: boolean;
+  } = {},
 ): { rules: GuidelineRule[]; text: string } {
   const wanted = new Set<string>(BASE_INTERVAL_RULES);
   for (const topic of topics) {
@@ -161,7 +167,26 @@ export function followUpSchedule(
   );
   if (!rules.length) return { rules: [], text: "" };
 
-  return { rules, text: buildText(rules) };
+  /*
+   * 男性病人不需要看到懷孕子句。
+   *
+   * 這條與上面那些「拿掉不適用的條目」是同一件事，只是粒度到子句。獨立審查
+   * 抓到懷孕衛教被寫給男性病人——內容沒錯，是放錯人，而讀報告的人分不出
+   * 「這句不適用我」和「這份報告不夠準」。
+   *
+   * 只動病人版的呈現，不動 GUIDELINE_RULES 本身：規則表是指引原文的引用，
+   * 內容庫要照原樣攤給人看。這裡改的是這一位病人看到的那一行。
+   */
+  const rendered =
+    options.male
+      ? rules.map((rule) => {
+          const text = rule.patientStatement ?? rule.statement;
+          if (!PREGNANCY_CLAUSE.test(text)) return rule;
+          return { ...rule, patientStatement: text.replace(PREGNANCY_CLAUSE, "") };
+        })
+      : rules;
+
+  return { rules, text: buildText(rendered) };
 }
 
 /** 鍵的順序就是報告裡的列出順序。同一個主題的兩型條目相鄰擺，換表不會改變位置。 */
@@ -188,6 +213,9 @@ const SUBJECT: Record<string, string> = {
 };
 
 /** 病人版：白話說法，不夾帶檢查技術名稱。 */
+/** 眼底追蹤間隔裡的懷孕子句。前面的分號一起帶走，免得留下空句。 */
+const PREGNANCY_CLAUSE = /；懷孕時需更頻繁追蹤/;
+
 function buildText(rules: GuidelineRule[]): string {
   if (!rules.length) return "";
   const lines = rules.map(
