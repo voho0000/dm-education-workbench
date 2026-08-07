@@ -178,6 +178,7 @@ for (const name of names) {
       } catch (error) {
         const message = String(error?.message ?? error);
         console.error(`\n  ${label} 失敗：${message}`);
+        callErrors.push(`${label}：${message}`);
         /*
          * 配額耗盡就整批停下來。
          *
@@ -318,6 +319,20 @@ for (const name of names) {
     ["reportReview", "10_原始回應_④報告審查.txt"],
   ]) {
     if (rawOutputs[key]) await writeFile(path.join(dir, file), rawOutputs[key], "utf8");
+  }
+  /*
+   * 呼叫失敗的原因寫進評估包，不能只印到 stdout。
+   *
+   * 踩過三次：批次輸出被 tail 截掉之後，一個沒有 09 檔的資料夾只說得出
+   * 「③ 失敗」，說不出為什麼——得重跑一次才知道是逾時還是解析錯。評估包
+   * 要能自己解釋自己，否則它只在當下那個終端機視窗裡有意義。
+   */
+  if (callErrors.length) {
+    await writeFile(
+      path.join(dir, "11_呼叫失敗.txt"),
+      `這一份有 ${callErrors.length} 次模型呼叫失敗。缺少的原始回應檔就是這幾次。\n\n${callErrors.join("\n")}\n`,
+      "utf8",
+    );
   }
   reviews.push(review);
   if (review.needsReview) {

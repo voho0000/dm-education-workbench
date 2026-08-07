@@ -4635,3 +4635,10 @@ test("腦血管模組不得讓已消失的症狀讀起來像可以等下次回�
   assert.ok(/119/.test(stroke.patientText), "再次發生要導向文末的 119 警訊");
   assert.ok(/不要等症狀自行消失/.test(stroke.urgentSigns), "文末警訊本身不變");
 });
+
+test("敘述器不得用整數門檻概括實際數值", () => {
+  // 實測：最高 459 mg/dL 被寫成「曾出現超過 400 mg/dL」。那個 400 不在資料
+  // 裡，機械驗證判為捏造而整份歸零——而且寫實際數字本來就更有用。
+  assert.ok(/不要用整數門檻概括/.test(LAB_NARRATIVE_PROMPT), "要明講不能取整數門檻");
+  assert.ok(/459/.test(LAB_NARRATIVE_PROMPT), "要給實際踩過的反例");
+});
