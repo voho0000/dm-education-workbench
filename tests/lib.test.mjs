@@ -4292,3 +4292,49 @@ test("被標記的句子要在它出現的位置也看得到標記", () => {
   assert.ok(bodyLine, "應該有那一行判讀");
   assert.match(bodyLine, /⚠/, "被標記的句子在正文那一行也要有標記，不能只在開頭的警告框");
 });
+
+test("同一個檢驗的中文寫法要合併，但 eAG 不算糖化血色素", () => {
+  /*
+   * 獨立審查發現病人版寫「6.1–6.5%」而醫師版只列 6.1%。查下去不是排版問題：
+   * 來源用兩個名稱記同一個檢驗（「Hb A1c 醣化血色素」6.1、「醣化血色素」6.5，
+   * 同一個醫令 09006C），而比對器只認得以 HbA1c 開頭的那一個——**6.5 完全
+   * 沒有進門檻判定**。與先前肌酸酐六種寫法同一類：名稱窮舉一定會漏。
+   *
+   * 但 09006C 底下還有 eAG（由 HbA1c 換算的平均血糖），加了醫令碼之後要確認
+   * 它沒有被一起收進來——那是換算值不是實測值，先前踩過這個坑。
+   */
+  const finding = (name, value, unit) =>
+    extractLabFindings(
+      extractPatientFacts({
+        userInput: { REPORT_DATE: "2026-08-06" },
+        rawSources: {
+          labData: { rObject: [{ order_code: "09006C", assay_item_name: name, assay_value: value, unit_data: unit, fee_ym: "11406" }] },
+        },
+      }),
+    ).find((item) => item.analyte === "HbA1c");
+
+  for (const name of ["醣化血色素", "Hb A1c 醣化血色素", "糖化血色素", "醣化血紅素"]) {
+    assert.ok(finding(name, "6.5", "%"), `應判為 HbA1c：${name}`);
+  }
+
+  // eAG 是換算出來的平均血糖，單位 mg/dL——不是糖化血色素
+  assert.equal(finding("Estimated average glucose (eAG)", "140", "mg/dL"), undefined);
+  assert.equal(finding("eAG", "154", "mg/dL"), undefined);
+
+  // 兩種寫法要合併成同一項，而不是各自成項
+  const merged = extractLabFindings(
+    extractPatientFacts({
+      userInput: { REPORT_DATE: "2026-08-06" },
+      rawSources: {
+        labData: {
+          rObject: [
+            { order_code: "09006C", assay_item_name: "Hb A1c 醣化血色素", assay_value: "6.1", unit_data: "%", fee_ym: "11406" },
+            { order_code: "09006C", assay_item_name: "醣化血色素", assay_value: "6.5", unit_data: "%", fee_ym: "11407" },
+          ],
+        },
+      },
+    }),
+  ).find((item) => item.analyte === "HbA1c");
+  assert.equal(merged.min, 6.1);
+  assert.equal(merged.max, 6.5, "兩種寫法的值都要進判定");
+});
