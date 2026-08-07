@@ -1,5 +1,6 @@
 import assert from "node:assert/strict";
 import { followUpSchedule } from "../app/lib/shared-care.ts";
+import { pregnancyApplies } from "../app/lib/education-modules.ts";
 import { readFile } from "node:fs/promises";
 import { readFileSync } from "node:fs";
 import test from "node:test";
@@ -4381,15 +4382,44 @@ test("水分建議在任何變體組合下都不是無條件的", () => {
   assert.ok(!/注意補充水分[。並]/.test(text), "不得留下無條件的補水指示");
 });
 
-test("男性病人的追蹤時程不出現懷孕子句", () => {
-  // 眼底追蹤間隔寫著「懷孕時需更頻繁追蹤」。對男性病人那是雜訊，而雜訊會
-  // 讓人懷疑其餘內容是不是也沒有依他的狀況挑過。
-  const male = followUpSchedule([1], { male: true });
-  assert.ok(male.text.includes("眼底"), "眼底追蹤本身仍要在");
-  assert.ok(!male.text.includes("懷孕"), "男性不應看到懷孕子句");
-  assert.ok(!male.text.includes("；。"), "拿掉子句後不得留下空句");
+test("懷孕內容不適用時，追蹤時程與衛教模組要一起拿掉", () => {
+  // 眼底追蹤間隔寫著「懷孕時需更頻繁追蹤」。獨立審查兩輪都抓到它放錯人：
+  // 第一輪是男性病人，第二輪是 72 歲女性——因為模組與時程各判一次，而
+  // 時程那邊只擋了男性。判準要是同一個。
+  const off = followUpSchedule([1], { pregnancyRelevant: false });
+  assert.ok(off.text.includes("眼底"), "眼底追蹤本身仍要在");
+  assert.ok(!off.text.includes("懷孕"), "不適用時不應看到懷孕子句");
+  assert.ok(!off.text.includes("；。"), "拿掉子句後不得留下空句");
 
   // 規則表本身是指引原文的引用，不能被改動——內容庫要照原樣攤給人看。
   assert.ok(followUpSchedule([1], {}).text.includes("懷孕時需更頻繁追蹤"));
-  assert.ok(male.rules.some((rule) => /懷孕時需更頻繁追蹤/.test(rule.patientStatement ?? rule.statement)));
+  assert.ok(off.rules.some((rule) => /懷孕時需更頻繁追蹤/.test(rule.patientStatement ?? rule.statement)));
+
+  // 模組與時程共用同一個判準：男性、高齡女性關掉，育齡女性與未知打開。
+  const facts = (sex, age) => ({
+    sex: { known: sex !== null, value: sex },
+    ageYears: { known: age !== null, value: age },
+  });
+  assert.equal(pregnancyApplies(facts("男性", 40)), false);
+  assert.equal(pregnancyApplies(facts("女性", 72)), false);
+  assert.equal(pregnancyApplies(facts("女性", 30)), true);
+  assert.equal(pregnancyApplies(facts(null, null)), true);
+});
+
+test("生病日模組的理由要寫出實際命中的成分名", () => {
+  // 獨立審查看到 SGLT2 專屬的警語，卻在事實摘要裡只讀到「metformin 或 SGLT2
+  // 抑制劑」，於是判定證據不足。觸發其實是對的，但它查不下去——醫師會遇到
+  // 一樣的問題，而查不下去的理由等於要人回頭翻原始資料。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", BIRTHDAY: "1951-01-01", R1: 2, R2: 2, R4: 2 },
+    rawSources: {
+      medication: {
+        rObject: [{ icd_code: "E119", drug_date: "2024-01-01", drug_ing_name: "DAPAGLIFLOZIN" }],
+      },
+    },
+  });
+  const plan = resolvePlan(null, facts);
+  const reason = plan.selfCareReasons?.["SC-SICKDAY"] ?? "";
+  assert.ok(reason.includes("DAPAGLIFLOZIN"), `理由要指名實際成分，實際是：${reason}`);
+  assert.ok(!reason.includes("metformin 或 SGLT2 抑制劑"), "不得只寫成一個查不下去的「或」");
 });

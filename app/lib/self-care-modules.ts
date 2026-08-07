@@ -232,6 +232,19 @@ export function selectSelfCareModules(
   // 使用者會完全拿不到生病日衛教。
   const ingredients = facts.medicationIngredients.join(" ");
   const holdDrugs = /metformin|雙胍|gliflozin/i.test(ingredients);
+  /*
+   * 理由要寫出實際命中的成分名，不是寫「metformin 或 SGLT2 抑制劑」。
+   *
+   * 獨立審查看到報告寫著 SGLT2 專屬的感染與正常血糖酮酸中毒警語，卻在事實
+   * 摘要裡只讀到一個「或」，於是判定「沒有足夠資訊支持本案曾申報 SGLT2
+   * 抑制劑」——觸發其實是對的（DAPAGLIFLOZIN 確實在申報紀錄裡），但它查不到。
+   *
+   * 醫師會遇到一樣的問題。一個查不下去的理由，等於要人回頭翻原始資料，
+   * 而那正是這份報告想省下來的事。
+   */
+  const heldIngredients = facts.medicationIngredients.filter((name) =>
+    /metformin|雙胍|gliflozin/i.test(name),
+  );
   const age = facts.ageYears.known ? facts.ageYears.value : null;
   const positives = establishedCount;
   if (steroid || holdDrugs || (age !== null && age >= 65) || positives >= 3) {
@@ -239,7 +252,7 @@ export function selectSelfCareModules(
     reasons["SC-SICKDAY"] = [
       steroid ? "申報用藥分類中出現全身性類固醇" : "",
       age !== null && age >= 65 ? `年齡 ${age} 歲` : "",
-      holdDrugs ? "申報用藥含生病期間可能需要暫停的類別（metformin 或 SGLT2 抑制劑）" : "",
+      holdDrugs ? `申報用藥含生病期間可能需要暫停的成分：${heldIngredients.join("、")}` : "",
       positives >= 3 ? `已發生併發症 ${positives} 項` : "",
     ]
       .filter(Boolean)

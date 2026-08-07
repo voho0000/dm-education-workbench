@@ -229,3 +229,21 @@ export const EDUCATION_MODULES: EducationModule[] = [
 ];
 
 export const MODULE_BY_ID = new Map(EDUCATION_MODULES.map((item) => [item.id, item]));
+
+/**
+ * 懷孕相關內容適不適用這位病人。
+ *
+ * 衛教模組（EYE-PREGNANCY）與追蹤時程裡的懷孕子句共用這個判準。分成兩處各
+ * 判一次的結果實測過：模組正確排除了 72 歲女性，追蹤時程卻只擋男性。
+ *
+ * 性別或年齡未知時回 true：漏掉對育齡女性是安全上的損失，多給一段只是雜訊。
+ */
+export function pregnancyApplies(facts: {
+  sex: { known: boolean; value?: "男性" | "女性" | null };
+  ageYears: { known: boolean; value?: number | null };
+}): boolean {
+  const gate = MODULE_BY_ID.get("EYE-PREGNANCY")?.sexGate;
+  if (!gate) return true;
+  if (facts.sex.known && facts.sex.value !== gate.sex) return false;
+  return !(facts.ageYears.known && typeof facts.ageYears.value === "number" && facts.ageYears.value > gate.maxAge);
+}

@@ -644,7 +644,17 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
       ruleId: "hba1c-unreliable",
       severity: "attention",
       clinicianMessage: `HbA1c ${a1c.min === a1c.max ? a1c.min : `${a1c.min}–${a1c.max}`} % 在${kidneyImpaired ? "腎功能不全" : ""}${kidneyImpaired && persistentAnaemia ? "合併" : ""}${persistentAnaemia ? "貧血" : ""}的情況下可能低估實際血糖，建議併用自我血糖監測或糖化白蛋白判讀。`,
-      patientMessage: `您的糖化血色素是 ${a1c.min === a1c.max ? a1c.min : `${a1c.min}–${a1c.max}`}%，看起來在目標範圍內，但這個數字對您可能不準。${kidneyImpaired ? "腎功能下降" : ""}${kidneyImpaired && persistentAnaemia ? "與" : ""}${persistentAnaemia ? "貧血" : ""}都會讓它比實際血糖低。請不要只看這個數字就認為血糖控制良好，回診時請醫療團隊一起看您平時的血糖紀錄。`,
+      /*
+       * 不講「看起來在目標範圍內」。
+       *
+       * 這句話原本是寫死的，不管數值多少都印。獨立審查在一位 HbA1c 9.2 % 的
+       * 病人身上抓到「9.2%，看起來在目標範圍內」，而下一行同一份報告寫著
+       * 「曾出現偏高的糖化血色素（9.2%）」——兩行相鄰，直接打架。
+       *
+       * 這一則要講的是「這個數字可能低估」，那件事跟數值在不在目標內無關。
+       * 達標與否交給門檻判定那一條去講，這裡只陳述數字與失真方向。
+       */
+      patientMessage: `您的糖化血色素是 ${a1c.min === a1c.max ? a1c.min : `${a1c.min}–${a1c.max}`}%，但這個數字對您可能不準。${kidneyImpaired ? "腎功能下降" : ""}${kidneyImpaired && persistentAnaemia ? "與" : ""}${persistentAnaemia ? "貧血" : ""}都會讓它比實際血糖低，也就是您的實際血糖可能比這個數字看起來更高。請不要只看這個數字判斷血糖控制，回診時請醫療團隊一起看您平時的血糖紀錄。`,
       citation: null,
     });
   }

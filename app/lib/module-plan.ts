@@ -15,6 +15,7 @@
 
 import {
   EDUCATION_MODULES,
+  pregnancyApplies,
   MODULE_BY_ID,
   MODULE_CATALOG_APPROVED,
   MODULE_CATALOG_VERSION,
@@ -421,13 +422,7 @@ export function resolvePlan(audit: DataAudit | null, facts: PatientFacts): Resol
    * 實際看到的內容是同一份清單——兩邊各判一次就會有一天不一致。
    */
   const SEX_VARIANTS: Record<string, string[]> = { "EYE-CORE": ["EYE-PREGNANCY"] };
-  const sexAllows = (id: string) => {
-    const gate = MODULE_BY_ID.get(id)?.sexGate;
-    if (!gate) return true;
-    // 性別未知時仍納入：漏掉對育齡女性是安全損失，多給一段只是雜訊。
-    if (facts.sex.known && facts.sex.value !== gate.sex) return false;
-    return !(facts.ageYears.known && facts.ageYears.value > gate.maxAge);
-  };
+  const sexAllows = (id: string) => (MODULE_BY_ID.get(id)?.sexGate ? pregnancyApplies(facts) : true);
 
   const topicModuleIds: string[] = [];
   for (const item of [...established, ...active, ...moderate]) {
@@ -580,7 +575,7 @@ export function resolvePlan(audit: DataAudit | null, facts: PatientFacts): Resol
       kidneyIntensive: labThresholds.some((hit) => hit.code === "kidney-intensive-followup"),
           type1: facts.diabetesType.verdict === "type1-confirmed",
           ckdMonitoringRuleId: ckdMonitoringRuleId(facts),
-          male: facts.sex.known && facts.sex.value === "男性",
+          pregnancyRelevant: pregnancyApplies(facts),
     }),
     urgentSigns,
   };

@@ -95,8 +95,13 @@ export function followUpSchedule(
     kidneyIntensive?: boolean;
     type1?: boolean;
     ckdMonitoringRuleId?: string | null;
-    /** 已知為男性。用來拿掉眼底追蹤裡的懷孕子句。 */
-    male?: boolean;
+    /**
+     * 懷孕相關內容適不適用這位病人。由 pregnancyApplies() 判定，與
+     * EYE-PREGNANCY 模組共用同一個判準——分開判就會有一天不一致，實測
+     * 就發生過：模組正確排除了 72 歲女性，這裡卻只擋男性，於是她的追蹤
+     * 時程仍寫著「懷孕時需更頻繁追蹤」。
+     */
+    pregnancyRelevant?: boolean;
   } = {},
 ): { rules: GuidelineRule[]; text: string } {
   const wanted = new Set<string>(BASE_INTERVAL_RULES);
@@ -168,17 +173,17 @@ export function followUpSchedule(
   if (!rules.length) return { rules: [], text: "" };
 
   /*
-   * 男性病人不需要看到懷孕子句。
+   * 懷孕內容不適用時拿掉那個子句。
    *
    * 這條與上面那些「拿掉不適用的條目」是同一件事，只是粒度到子句。獨立審查
-   * 抓到懷孕衛教被寫給男性病人——內容沒錯，是放錯人，而讀報告的人分不出
-   * 「這句不適用我」和「這份報告不夠準」。
+   * 兩輪都抓到：第一輪是寫給男性病人，第二輪是寫給 72 歲女性——內容沒錯，
+   * 是放錯人，而讀報告的人分不出「這句不適用我」和「這份報告不夠準」。
    *
    * 只動病人版的呈現，不動 GUIDELINE_RULES 本身：規則表是指引原文的引用，
    * 內容庫要照原樣攤給人看。這裡改的是這一位病人看到的那一行。
    */
   const rendered =
-    options.male
+    options.pregnancyRelevant === false
       ? rules.map((rule) => {
           const text = rule.patientStatement ?? rule.statement;
           if (!PREGNANCY_CLAUSE.test(text)) return rule;
