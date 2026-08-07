@@ -4234,3 +4234,37 @@ test("轉介提示是回顧性的，不寫成現在就該做的事", () => {
   // 指引原文本身照抄，不改寫
   assert.match(hit.clinicianMessage, /建議轉介腎臟專科醫師/);
 });
+
+test("獨立審查（codex）找到的三類：淡化異常、衰退、現在式用藥", () => {
+  /*
+   * 這三類都是**另一個模型**抓到的，而同源的 ④ 審查器沒抓到——它與生成器
+   * 共用同一套「怎麼描述數值」的直覺，所以看不見自己也會犯的錯。
+   *
+   * 最有代表性的是第一類：鈉 157 mmol/L 被寫成「電解質輕微偏高」。那不是
+   * 輕微，是需要處理的高血鈉。
+   */
+  for (const text of [
+    "電解質數值多數在正常範圍附近，但曾出現輕微偏高或偏低現象",
+    "血鈉稍微偏高",
+  ]) {
+    const found = findUnsupportedClaims(text, "clinician");
+    assert.ok(found.some((item) => item.label === "把異常值淡化成輕微"), `應標記淡化：${text}`);
+  }
+
+  // 「衰退」「受損」原本不在推測診斷的字裡，實測「提示腎功能衰退」整句放行
+  assert.ok(findUnsupportedClaims("顯著高於正常值，提示腎功能衰退", "clinician").length > 0);
+
+  // 陳述數值本身、或講與數值無關的事，都不該擋
+  assert.deepEqual(findUnsupportedClaims("紀錄中曾出現血鈉 157 mmol/L，高於參考範圍", "clinician"), []);
+  assert.deepEqual(findUnsupportedClaims("體重略為下降是常見的現象", "clinician"), []);
+});
+
+test("自我照護模組不得把歷史申報寫成「您使用的藥物」", () => {
+  // 獨立審查指出：最後一批申報距報告日已超過兩年，卻寫成病人現在在吃。
+  const all = [
+    ...SELF_CARE_MODULES.map((item) => item.patientText),
+    ...SELF_CARE_MODULES.flatMap((item) => (item.definiteVariants ?? []).map((v) => v.to)),
+  ].join("\n");
+  assert.ok(!all.includes("您使用的藥物"), "不得用現在式描述歷史申報的用藥");
+  assert.match(all, /申報紀錄中的藥物|申報紀錄中有一類藥物/);
+});
