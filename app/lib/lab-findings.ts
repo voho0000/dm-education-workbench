@@ -664,14 +664,38 @@ export function evaluateThresholds(findings: AnalyteFinding[], facts: PatientFac
   const anyGlucose = [get("fasting-glucose"), get("postprandial-glucose"), get("glucose-unspecified")].filter(
     (item): item is AnalyteFinding => Boolean(item),
   );
-  const lowest = anyGlucose.length ? Math.min(...anyGlucose.map((item) => item.min)) : null;
-  if (lowest !== null && lowest < 70) {
+  /*
+   * 要寫出這個最低值是哪一個項目來的。
+   *
+   * 原本一律標成「Glucose」。獨立審查在一位病人身上讀到「Glucose 曾出現
+   * 20 mg/dL」，回頭查第五節的 Glucose 卻是 68——它判定檢驗項目寫錯。
+   * 實際上 20 來自 Glu-AC（空腹，碼 09005C），而 68 來自另一個叫 Glucose
+   * 的項目。值沒有錯，錯的是報告沒讓人對得起來，於是同一份報告看起來
+   * 自相矛盾。
+   */
+  const lowestItem = anyGlucose.length
+    ? anyGlucose.reduce((best, item) => (item.min < best.min ? item : best))
+    : null;
+  const lowest = lowestItem ? lowestItem.min : null;
+  const LOWEST_LABEL: Record<string, string> = {
+    "fasting-glucose": "空腹血糖",
+    "postprandial-glucose": "餐後血糖",
+    "glucose-unspecified": "未標示採檢時機的血糖",
+  };
+  if (lowest !== null && lowestItem && lowest < 70) {
     hits.push({
       code: "hypoglycemia",
       analyte: null,
       ruleId: "hypoglycemia-levels",
       severity: lowest < 54 ? "urgent" : "attention",
-      clinicianMessage: `Glucose 曾出現 ${lowest} mg/dL，屬低血糖範圍${lowest < 54 ? "（低於 54，屬嚴重低血糖）" : ""}。`,
+      /*
+       * 分級用指引自己的講法。
+       *
+       * 原本寫「屬嚴重低血糖」，而我們引用的表一（p.141）把低於 54 定為
+       * 第二級低血糖——程式跟自己引的規則牴觸。「嚴重低血糖」在臨床上另有
+       * 定義（需要他人協助），不能只憑數值判定。
+       */
+      clinicianMessage: `${LOWEST_LABEL[lowestItem.analyte] ?? "血糖"}曾出現 ${lowest} mg/dL，屬低血糖範圍${lowest < 54 ? "（低於 54，為指引表一的第二級低血糖）" : "（低於 70，為第一級）"}。`,
       patientMessage:
         "您的資料中曾出現偏低的血糖數值。低血糖可能造成發抖、冒冷汗、頭暈或意識改變，請在回診時主動提出，讓醫療團隊了解發生的情況。",
       citation: null,

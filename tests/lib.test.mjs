@@ -1647,7 +1647,9 @@ test("醫師版每一條門檻判定都能追到出處，沒有出處的要標�
   // 目標值逐條附章表與頁次
   assert.match(report, /LDL-C：.+〔.+p\.\d+〕/);
   // 低血糖門檻取自指引表一，必須帶得出頁次
-  assert.match(report, /Glucose 曾出現.*屬低血糖範圍。.*〔表一 低血糖分級，p\.141〕/);
+  // 項目名要指名是哪一種血糖：原本一律寫「Glucose」，讀者拿去對第五節的
+  // Glucose 會對不起來，因為最低值其實來自 Glu-AC。
+  assert.match(report, /(空腹血糖|餐後血糖|未標示採檢時機的血糖)曾出現.*屬低血糖範圍.*〔表一 低血糖分級，p\.141〕/);
   // 指引沒有的門檻要明講，不能讓人以為每條都有依據
   assert.match(report, /K 曾出現偏低數值.+一般臨床門檻，非本指引條列/);
 
@@ -4422,4 +4424,26 @@ test("生病日模組的理由要寫出實際命中的成分名", () => {
   const reason = plan.selfCareReasons?.["SC-SICKDAY"] ?? "";
   assert.ok(reason.includes("DAPAGLIFLOZIN"), `理由要指名實際成分，實際是：${reason}`);
   assert.ok(!reason.includes("metformin 或 SGLT2 抑制劑"), "不得只寫成一個查不下去的「或」");
+});
+
+test("低血糖分級用指引自己的講法，不自己升級成「嚴重」", () => {
+  // 我們引用的表一（p.141）把低於 54 定為第二級低血糖，程式卻寫「屬嚴重
+  // 低血糖」——跟自己引的規則牴觸。「嚴重低血糖」臨床上另有定義（需要
+  // 他人協助），不能只憑數值判定。
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-03", R1: 2 },
+    rawSources: {
+      labData: {
+        rObject: [
+          { fee_ym: "11412", order_code: "09005C", order_name: "血液及體液葡萄糖-空腹",
+            assay_item_name: "Glu-AC", assay_value: "20", unit_data: "mg/dL" },
+        ],
+      },
+    },
+  });
+  const hit = evaluateThresholds(extractLabFindings(facts), facts).find((item) => item.code === "hypoglycemia");
+  assert.ok(hit, "20 mg/dL 必須被判為低血糖");
+  assert.ok(!hit.clinicianMessage.includes("嚴重低血糖"), "不得自己升級成「嚴重低血糖」");
+  assert.ok(hit.clinicianMessage.includes("第二級低血糖"), "要用指引表一的分級講法");
+  assert.ok(hit.clinicianMessage.includes("空腹血糖"), "要指名是哪一種血糖");
 });
