@@ -4542,3 +4542,23 @@ test("敘述器的寫作原則不得誘導它推論器官狀態", () => {
   assert.ok(/用機轉描述也算/.test(LAB_NARRATIVE_PROMPT), "禁止事項要涵蓋機轉寫法");
   assert.ok(/顯示腎臟過濾屏障受損/.test(LAB_NARRATIVE_PROMPT), "要給出實際踩過的反例");
 });
+
+test("數字比對看數值，不看小數位數", () => {
+  // 來源寫「[3.5][5]」，模型照抄成「3.5 至 5.0 mmol/L」，整份報告因此硬性
+  // 歸零。5 與 5.0 是同一個值——這項檢查要問的是模型有沒有編出來源沒有的
+  // 數字，不是有沒有逐字照抄格式。
+  const same = validateReport({
+    report: "血鉀參考範圍 3.5 至 5.0 mmol/L。",
+    patientText: "K 參考:[3.5][5]",
+    profile: "modules",
+  }).results.find((item) => item.id === "numbers-supported");
+  assert.ok(same.passed, `5.0 對上來源的 5 不該算捏造：${same.violations.join("；")}`);
+
+  // 但真的沒出現過的數字還是要抓出來。
+  const invented = validateReport({
+    report: "血鉀曾出現 9.9 mmol/L。",
+    patientText: "K 參考:[3.5][5]",
+    profile: "modules",
+  }).results.find((item) => item.id === "numbers-supported");
+  assert.ok(!invented.passed, "來源沒有的 9.9 必須被抓出來");
+});

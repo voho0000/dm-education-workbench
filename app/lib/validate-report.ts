@@ -115,6 +115,21 @@ function extractNumbers(text: string): string[] {
   return [...text.matchAll(/\d+(?:\.\d+)?/g)].map((match) => match[0]);
 }
 
+/**
+ * 比對數字時用數值，不用字串。
+ *
+ * 來源寫「[3.5][5]」，模型照抄成「3.5 至 5.0 mmol/L」——同一個數字，多一位
+ * 小數就被判成捏造，整份報告硬性歸零。這種誤報比漏抓更糟：一份被錯誤擋下的
+ * 報告會讓人開始不信這個分數，而分數的用途正是指出哪幾份要看。
+ *
+ * 5 與 5.0 是同一個值，這裡要問的是「模型有沒有編出來源沒有的數字」，
+ * 不是「有沒有逐字照抄格式」。
+ */
+function numericKey(value: string): string {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) ? String(parsed) : value;
+}
+
 function check(id: CheckId, label: string, applicable: boolean, violations: string[]): CheckResult {
   return { id, label, applicable, passed: applicable ? violations.length === 0 : true, violations };
 }
@@ -266,12 +281,13 @@ export function validateReport(args: ValidateArgs): ValidationReport {
       "報告中的數字都能在輸入資料或指引目標值中找到",
       true,
       (() => {
-        const inputNumbers = new Set(extractNumbers(patientText));
-        for (const value of derivedNumbers) inputNumbers.add(String(value));
+        const inputNumbers = new Set(extractNumbers(patientText).map(numericKey));
+        for (const value of derivedNumbers) inputNumbers.add(numericKey(String(value)));
+        const targets = new Set([...GUIDELINE_TARGET_NUMBERS].map(numericKey));
         const unsupported = new Set<string>();
         for (const value of extractNumbers(report)) {
-          if (inputNumbers.has(value)) continue;
-          if (GUIDELINE_TARGET_NUMBERS.has(value)) continue;
+          if (inputNumbers.has(numericKey(value))) continue;
+          if (targets.has(numericKey(value))) continue;
           unsupported.add(value);
         }
         return [...unsupported].slice(0, 10).map((value) => `輸入資料中找不到的數字：${value}`);
