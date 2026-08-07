@@ -299,7 +299,11 @@ export function formatLabReview(check: LabReviewCheck, alreadyShown: Set<string>
     return !(analyte && alreadyShown.has(analyte));
   });
   lines.push(
-    `  以下由輔助判讀器讀取 ${check.sourceRecords} 筆原始紀錄判定，只列與糖尿病相關且非急性事件當下的異常。`,
+    /*
+     * 講「申報列」不講「筆紀錄」。獨立審查指出「1819 筆」會被讀成 1819 次
+     * 獨立採血——同一次抽血在申報資料裡可能拆成多列，也可能重複申報。
+     */
+    `  以下由輔助判讀器讀取 ${check.sourceRecords} 列原始申報紀錄判定（申報列數不等於採血次數），只列與糖尿病相關且非急性事件當下的異常。`,
   );
 
   /*
@@ -336,7 +340,16 @@ export function formatLabReview(check: LabReviewCheck, alreadyShown: Set<string>
       const unit = item.unit && !alreadyHasUnit ? ` ${item.unit}` : "";
       const other = item.worstOther ? `／另一端 ${item.worstOther}` : "";
       const flag = check.unverifiedValues.includes(item) ? "  ⚠ 此數值在來源中找不到" : "";
-      lines.push(`  ${item.item}：${item.worst}${unit}${other}（參考 ${item.reference || "來源未提供"}）${item.why ? `｜${item.why}` : ""}${flag}`);
+      /*
+       * 被標記的句子要在**它出現的地方**也看得到標記。
+       *
+       * 獨立審查指出：警告框列在這一節開頭，但同一句話在下面的判讀正文裡
+       * 原樣出現，讀到那裡的人不會知道它被標記過——警告與內容隔了二十行，
+       * 印象已經形成了。
+       */
+      const claimed = check.unsupportedClaims.find((claim) => item.why && claim.sentence.includes(item.why.slice(0, 20)));
+      const claimFlag = claimed ? `  ⚠ ${claimed.label}` : "";
+      lines.push(`  ${item.item}：${item.worst}${unit}${other}（參考 ${item.reference || "來源未提供"}）${item.why ? `｜${item.why}` : ""}${flag}${claimFlag}`);
     }
   } else {
     lines.push("  （無其他與糖尿病相關的異常）");

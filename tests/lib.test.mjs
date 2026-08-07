@@ -1117,7 +1117,7 @@ test("醫師版要說清楚哪些由指引判定、哪些由判讀器判定", ()
   // 合併成一節，但仍要分得出哪些是指引判的、哪些是判讀器判的
   assert.match(report, /檢驗結果/);
   assert.match(report, /依指引門檻表逐條判定的核心指標/);
-  assert.match(report, /由輔助判讀器讀取 \d+ 筆原始紀錄判定/);
+  assert.match(report, /由輔助判讀器讀取 \d+ 列原始申報紀錄判定（申報列數不等於採血次數）/);
   assert.ok(
     report.indexOf("依指引門檻表逐條判定") < report.indexOf("由輔助判讀器讀取"),
     "指引判定的排在前面",
@@ -4267,4 +4267,28 @@ test("自我照護模組不得把歷史申報寫成「您使用的藥物」", ()
   ].join("\n");
   assert.ok(!all.includes("您使用的藥物"), "不得用現在式描述歷史申報的用藥");
   assert.match(all, /申報紀錄中的藥物|申報紀錄中有一類藥物/);
+});
+
+test("被標記的句子要在它出現的位置也看得到標記", () => {
+  /*
+   * 獨立審查指出：警告框列在該節開頭，但同一句話在下面的判讀正文裡原樣
+   * 出現，讀到那裡的人不會知道它被標記過——警告與內容隔了二十行。
+   */
+  const facts = extractPatientFacts({
+    userInput: { REPORT_DATE: "2026-08-06" },
+    rawSources: { labData: { rObject: [{ fee_ym: "11406", assay_item_name: "eGFR", assay_value: "43", unit_data: "ml/min/1.73m2" }] } },
+  });
+  const check = parseLabReview(
+    JSON.stringify({
+      abnormal: [{ item: "eGFR", worst: "43", worst_other: "", unit: "ml/min/1.73m2", reference: "", direction: "低", why: "提示腎功能衰退，符合慢性腎臟病" }],
+      groups: [], worth_a_look: [], data_quality_notes: [],
+    }),
+    facts,
+  );
+  assert.ok(check.unsupportedClaims.length > 0, "這句該被標記");
+
+  const rendered = formatLabReview(check);
+  const bodyLine = rendered.split("\n").find((line) => line.includes("eGFR：43"));
+  assert.ok(bodyLine, "應該有那一行判讀");
+  assert.match(bodyLine, /⚠/, "被標記的句子在正文那一行也要有標記，不能只在開頭的警告框");
 });
